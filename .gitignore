@@ -1,0 +1,9 @@
+node_modules/
+server/public/
+data/incoming/*
+!data/incoming/.gitkeep
+*.log
+.DS_Store
+.env
+.env.local
+dist/

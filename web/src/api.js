@@ -1,0 +1,55 @@
+// 前端 API 封装：REST 查询 + SSE 订阅。无任何外部请求，全部走同源 /api。
+
+async function http(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const body = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || body.ok === false) {
+    throw new Error((body.error && body.error.message) || `请求失败 ${res.status}`);
+  }
+  return body;
+}
+
+export const api = {
+  health: () => http('/api/health'),
+  records: (params = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') q.set(k, v);
+    }
+    const s = q.toString();
+    return http(`/api/records${s ? '?' + s : ''}`);
+  },
+  stats: () => http('/api/stats'),
+  metrics: () => http('/api/metrics'),
+  series: (metric, limit = 200) => http(`/api/series?metric=${encodeURIComponent(metric)}&limit=${limit}`),
+  config: () => http('/api/config'),
+  updateConfig: (patch) => http('/api/config', { method: 'PUT', body: JSON.stringify(patch) }),
+  errors: () => http('/api/errors'),
+  scan: () => http('/api/scan', { method: 'POST' }),
+  clear: () => http('/api/clear', { method: 'POST' }),
+  demoEmit: (count = 1) => http(`/api/demo/emit?count=${count}`, { method: 'POST' }),
+  demoSlow: () => http('/api/demo/slow', { method: 'POST' }),
+};
+
+// 订阅 SSE，返回 { close }。handler(event, data)
+export function subscribe(handlers) {
+  const es = new EventSource('/api/events');
+  const events = ['hello', 'snapshot', 'records', 'stats', 'watcher', 'alert', 'heartbeat'];
+  for (const ev of events) {
+    es.addEventListener(ev, (e) => {
+      let data = null;
+      try { data = JSON.parse(e.data); } catch (_) { data = e.data; }
+      if (handlers[ev]) handlers[ev](data);
+    });
+  }
+  es.onerror = () => {
+    if (handlers.onState) handlers.onState('reconnecting');
+  };
+  es.onopen = () => {
+    if (handlers.onState) handlers.onState('connected');
+  };
+  return { close: () => es.close() };
+}

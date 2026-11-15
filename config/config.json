@@ -1,0 +1,80 @@
+{
+  "host": "0.0.0.0",
+  "port": 7788,
+
+  "watchDir": "./data/incoming",
+  "recursive": true,
+  "bufferSize": 5000,
+  "detailRetainCount": 500,
+
+  "stabilityThreshold": 400,
+  "pollInterval": 100,
+  "debounceMs": 60,
+  "readRecheckDelay": 80,
+  "maxRetries": 4,
+  "retryBackoffMs": [150, 300, 600, 1200],
+
+  "maxXmlPreviewBytes": 32768,
+  "maxFileSize": 2097152,
+  "maxMetricsPerRecord": 160,
+  "maxTopicsPerRecord": 40,
+  "maxParseDepth": 64,
+
+  "ignorePatterns": [
+    "**/*.tmp",
+    "**/*.temp",
+    "**/*.part",
+    "**/*.partial",
+    "**/*.swp",
+    "**/*.swx",
+    "**/*.crdownload",
+    "**/*.lock",
+    "**/*~",
+    "**/~*"
+  ],
+
+  "fieldAliases": {
+    "timestamp": ["timestamp", "time", "ts", "timeStamp", "sampleTime", "captureTime", "dateTime", "utc", "snapshotTimestamp", "snapshot_timestamp", "startTimestamp", "onlineTimestamp", "online_timestamp"],
+    "node": ["nodeId", "node", "nodeName", "collector", "collectorId", "participant", "host", "source", "device", "hostId", "HostId"],
+    "domain": ["domainId", "domain", "domain_id", "ddsDomain", "domainID"],
+    "seq": ["seq", "sequence", "seqNo", "seqNum", "index", "frameId", "counter", "sn"],
+    "status": ["status", "state", "health", "level", "result", "condition", "online"],
+    "topic": ["topic", "topicName", "topic_name", "topicId"],
+    "type": ["type", "typeName", "type_name", "dataType"]
+  },
+
+  "statusMapping": {
+    "OK": ["OK", "ALIVE", "RUNNING", "HEALTHY", "NORMAL", "PASS", "ACTIVE", "GOOD", "ONLINE", "1", "true"],
+    "WARN": ["WARN", "WARNING", "DEGRADED", "TIMEOUT", "STALE", "SLOW", "2"],
+    "ERROR": ["ERROR", "FAULT", "FAILED", "FAIL", "DOWN", "CRITICAL", "OFFLINE", "LOST", "FATAL", "0", "false"]
+  },
+
+  "split": {
+    "enabled": true,
+    "recordPaths": [
+      { "path": "domain_snapshot.domain.participant.element", "kind": "participant" },
+      { "path": "domain_snapshot.domain.endpoint.element", "kind": "endpoint" }
+    ],
+    "context": [
+      { "from": "domain_snapshot.@_snapshot_timestamp", "as": "snapshotTimestamp" },
+      { "from": "domain_snapshot.@_start_timestamp", "as": "startTimestamp" },
+      { "from": "domain_snapshot.domain.@_value", "as": "domain" },
+      { "from": "domain_snapshot.domain.@_discovery_multicast_address", "as": "discoveryMulticastAddress" },
+      { "from": "domain_snapshot.domain.@_online_node_count", "as": "onlineNodeCount" },
+      { "from": "domain_snapshot.domain.@_node_count", "as": "nodeCount" },
+      { "from": "domain_snapshot.domain.@_online_participant_count", "as": "onlineParticipantCount" },
+      { "from": "domain_snapshot.domain.@_participant_count", "as": "participantCount" },
+      { "from": "domain_snapshot.domain.@_topic_count", "as": "topicCount" },
+      { "from": "domain_snapshot.domain.@_writer_count", "as": "writerCount" },
+      { "from": "domain_snapshot.domain.@_reader_count", "as": "readerCount" },
+      { "from": "domain_snapshot.domain.@_vendor_count", "as": "vendorCount" }
+    ]
+  },
+
+  "numericMetricExclude": [
+    "guid", "pubsub_guid", "name", "address", "host", "topic_name", "type_name",
+    "entity_name", "idlfile", "vendor_id", "rtps_version", "value", "type",
+    "domain", "snapshotTimestamp", "startTimestamp", "discoveryMulticastAddress",
+    "reliability", "durability", "ownership", "endpoint_type"
+  ]
+}

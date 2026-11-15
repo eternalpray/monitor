@@ -1,0 +1,16 @@
+{
+  "name": "dds-light-monitor-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DDS 轻量监控工具后端（Express + chokidar + fast-xml-parser + iconv-lite）",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.1",
+    "express": "^4.19.2",
+    "fast-xml-parser": "^4.5.7",
+    "iconv-lite": "^0.6.3"
+  }
+}

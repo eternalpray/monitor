@@ -1,0 +1,21 @@
+{
+  "name": "dds-light-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DDS 采集节点轻量级实时监控工具（本地单进程 + 浏览器界面）",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build -w web",
+    "verify": "node scripts/selfcheck.mjs",
+    "clean": "node -e \"require('fs').rmSync('server/public',{recursive:true,force:true})\""
+  }
+}

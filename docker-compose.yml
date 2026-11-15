@@ -1,0 +1,15 @@
+services:
+  dds-monitor:
+    build:
+      context: .
+    image: dds-light-monitor:1.0.0
+    ports:
+      - "7788:7788"
+    volumes:
+      - ./data/incoming:/app/data/incoming
+    environment:
+      - HOST=0.0.0.0
+      - PORT=7788
+      # 采集目录（容器内路径）；如需改监听目录用此环境变量
+      - DDS_WATCH_DIR=/app/data/incoming
+    restart: unless-stopped

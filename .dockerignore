@@ -1,0 +1,8 @@
+node_modules
+server/public
+web/dist
+data/incoming/*
+!data/incoming/.gitkeep
+.git
+*.log
+.env
