@@ -12,16 +12,18 @@ async function http(path, opts = {}) {
   return body;
 }
 
+function qs(params = {}) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') q.set(k, v);
+  }
+  const s = q.toString();
+  return s ? '?' + s : '';
+}
+
 export const api = {
   health: () => http('/api/health'),
-  records: (params = {}) => {
-    const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== null && v !== '') q.set(k, v);
-    }
-    const s = q.toString();
-    return http(`/api/records${s ? '?' + s : ''}`);
-  },
+  records: (params = {}) => http(`/api/records${qs(params)}`),
   stats: () => http('/api/stats'),
   metrics: () => http('/api/metrics'),
   series: (metric, limit = 200) => http(`/api/series?metric=${encodeURIComponent(metric)}&limit=${limit}`),
@@ -32,12 +34,22 @@ export const api = {
   clear: () => http('/api/clear', { method: 'POST' }),
   demoEmit: (count = 1) => http(`/api/demo/emit?count=${count}`, { method: 'POST' }),
   demoSlow: () => http('/api/demo/slow', { method: 'POST' }),
+
+  // ---- v1.1：域 / 参与者 / 主题 / 兼容性 ----
+  domains: (params = {}) => http(`/api/domains${qs(params)}`),
+  domain: (id) => http(`/api/domains/${encodeURIComponent(id)}`),
+  participants: (id, ip) => http(`/api/domains/${encodeURIComponent(id)}/participants${ip ? '?ip=' + encodeURIComponent(ip) : ''}`),
+  participant: (guid, domainId) => http(`/api/participants/${encodeURIComponent(guid)}${domainId ? '?domainId=' + encodeURIComponent(domainId) : ''}`),
+  topics: (id, name) => http(`/api/domains/${encodeURIComponent(id)}/topics${name ? '?name=' + encodeURIComponent(name) : ''}`),
+  topic: (id, name) => http(`/api/domains/${encodeURIComponent(id)}/topics/${encodeURIComponent(name)}`),
+  topicCompatibility: (id, name) => http(`/api/domains/${encodeURIComponent(id)}/topics/${encodeURIComponent(name)}/compatibility`),
+  ips: (domainId) => http(`/api/ips${domainId ? '?domainId=' + encodeURIComponent(domainId) : ''}`),
 };
 
 // 订阅 SSE，返回 { close }。handler(event, data)
 export function subscribe(handlers) {
   const es = new EventSource('/api/events');
-  const events = ['hello', 'snapshot', 'records', 'stats', 'watcher', 'alert', 'heartbeat'];
+  const events = ['hello', 'snapshot', 'records', 'stats', 'watcher', 'alert', 'heartbeat', 'domains', 'domainDetail', 'compatibility'];
   for (const ev of events) {
     es.addEventListener(ev, (e) => {
       let data = null;

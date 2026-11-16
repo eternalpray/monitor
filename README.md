@@ -6,6 +6,7 @@
 - **后端**：Node.js + Express + chokidar + fast-xml-parser + iconv-lite
 - **前端**：React 18 + Vite 5（深色仪表盘，SVG 自绘图表，无 CDN/外部字体）
 - **实时**：SSE（Server-Sent Events）单向推送，浏览器原生 `EventSource` 自动重连
+- **（v1.1）拓扑下钻**：主视图为 **Domain 域级列表**，点击域以右侧抽屉逐级下钻到 **域详情 → 参与者 / 主题**，并内置 **QoS 兼容性静态判定**（DDS RxO 规则）
 
 ---
 
@@ -34,6 +35,37 @@ npm run dev   # 并行启动 Vite(5173) + Express(7788)，Vite 代理 /api 到�
 
 ---
 
+## 1.5 多层级抽屉下钻（v1.1）
+
+界面主视图为 **Domain 域级列表**，每行展示该域的参与者数 / 去重 IP / 主题数 / 写读端点数 / 健康状态 / 兼容性结论。
+
+| 层级 | 内容 | 进入方式 |
+| --- | --- | --- |
+| L0 主视图 | 域级列表 + 全局概览卡片 | 默认 |
+| L1 抽屉 A | 域详情：头部汇总 + 「域参与者 / 主题」两个视图 + IP/主题/状态过滤 | 点击某个域 |
+| L2 抽屉 B | 参与者详情：GUID/IP/PID/QoS 明细、发布与订阅主题列表 | 点击 L1 参与者 |
+| L2 抽屉 C | 主题详情：发送 IP / 接收 IP、收发关系图（SVG）、兼容性分析 | 点击 L1 主题 |
+
+交互：右侧滑入、L2 叠加于 L1 之上、顶部面包屑、`ESC` 逐级关闭、点击遮罩关闭当前级；SSE 增量刷新只更新变化字段，不重置过滤条件与滚动位置。
+
+### QoS 兼容性判定规则（RxO）
+
+对同一 `domainId + topic` 下每个 **writer × reader** 配对做静态判定（`Offered` = 发布端、`Requested` = 订阅端）：
+
+| 维度 | 规则 |
+| --- | --- |
+| 类型名 | 必须一致 |
+| Partition | 分区集合需有交集，或双方均为空 |
+| Reliability | `Offered ≥ Requested`（`BEST_EFFORT=0 < RELIABLE=1`） |
+| Durability | `Offered ≥ Requested`（`VOLATILE=0 < TRANSIENT_LOCAL=1 < TRANSIENT=2 < PERSISTENT=3`） |
+| Deadline | `Offered.period ≤ Requested.period`（`INF` 无穷大） |
+| Liveliness | `Offered.kind ≥ Requested.kind` 且 `Offered.lease ≤ Requested.lease` |
+| Ownership | 必须相等（`SHARED` / `EXCLUSIVE`） |
+
+结论：任一关键字段缺失 → `UNKNOWN`（不臆断）；全通过 → `COMPATIBLE`；否则 → `INCOMPATIBLE`。主题级：全部 `UNKNOWN` → `UNKNOWN`；`INCOMPATIBLE` 与 `COMPATIBLE` 并存 → `PARTIAL`；其余 → `COMPATIBLE`。
+
+---
+
 ## 2. 模板输入：LJDDS 域监控快照
 
 本工具按 PRD 要求保持**格式宽容**（任意结构良好的 XML 均可接入），同时已内置对
@@ -48,6 +80,10 @@ npm run dev   # 并行启动 Vite(5173) + Express(7788)，Vite 代理 /api 到�
 | 参与者 `<participant><element>`（节点） | 拆分为 participant 记录 |
 | 端点 `<endpoint><element>`（datawriter/datareader） | 拆分为 endpoint 记录，`topic_name`/`type_name` 归一为 Topic/类型 |
 | **文件为 GBK/GB18030 编码**（无 XML 声明） | `parser.decodeBuffer` 自动检测：BOM → 严格 UTF-8 → GB18030 兜底 |
+
+### v1.1：结构化拓扑字段（参与者 / 端点 / QoS）
+
+除 LJDDS 模板外，解析器会从任意结构良好的 XML 中提取 **域参与者 `participants[]`** 与 **发布/订阅端点 `endpoints[]`**（writer/reader），并归一化 QoS 字段（`reliability` / `durability` / `deadline` / `liveliness` / `ownership` / `partition`）。只要采集节点上报 `domainId`、参与者 `guid/ip`、端点 `role/topic/ip` 与关键 QoS，即可自动获得域下钻与兼容性结论；字段缺失对应视图显示「—」，兼容性结论为 `UNKNOWN`（不臆造）。对齐示例见 PRD 附录 C。
 
 ### 适配你自己的采集节点 XML
 
@@ -72,8 +108,12 @@ npm run dev   # 并行启动 Vite(5173) + Express(7788)，Vite 代理 /api 到�
 | `maxRetries` | `4` | 完整性重试次数（退避 150/300/600/1200ms） |
 | `maxXmlPreviewBytes` | `32768` | 原始 XML 预览上限 |
 | `maxFileSize` | `2097152` | 单文件大小上限（2 MB） |
+| `domainWindowSec` | `300` | 域/主题聚合统计时间窗（秒） |
+| `domainWindowRecords` | `500` | 聚合窗口内最多参考记录条数 |
+| `domainEventThrottleMs` | `200` | 域相关 SSE 事件节流间隔 |
+| `maxPairsPerTopic` | `400` | 单主题 writer×reader 配对上限（超出抽样） |
 
-配置可**热更新**（`PUT /api/config` 或界面「设置」），切换监听目录无需重启进程。
+配置可**热更新**（`PUT /api/config` 或界面「设置」），切换监听目录 / 调整聚合窗口无需重启进程。
 
 ---
 
@@ -107,8 +147,18 @@ npm run dev   # 并行启动 Vite(5173) + Express(7788)，Vite 代理 /api 到�
 | POST | `/api/demo/emit?count=` | 生成演示数据（原子写） |
 | POST | `/api/demo/slow` | 慢速分块写（验证防半截） |
 | GET | `/api/events` | SSE 实时通道 |
+| GET | `/api/domains` | 域级列表（L0，`q/sort/status`） |
+| GET | `/api/domains/:domainId` | 域详情（L1，`ip/name/status` 过滤） |
+| GET | `/api/domains/:domainId/participants` | 按 IP 过滤参与者 |
+| GET | `/api/domains/:domainId/topics` | 按主题名过滤主题 |
+| GET | `/api/domains/:domainId/topics/:topicName` | 主题详情（发送/接收 IP + 兼容性） |
+| GET | `/api/domains/:domainId/topics/:topicName/compatibility` | 单独获取兼容性分析 |
+| GET | `/api/participants/:guid` | 参与者详情（L2-B） |
+| GET | `/api/ips` | 可用 IP 清单（过滤下拉） |
 
-SSE 事件：`hello` / `snapshot` / `records` / `stats` / `watcher` / `alert` / `heartbeat`。
+SSE 事件：`hello` / `snapshot`（含 `domains[]`）/ `records` / `stats` / `watcher` / `alert` / `heartbeat` / **`domains`** / **`domainDetail`** / **`compatibility`**。
+
+> 主题名常含 `/`（如 `rt/vehicle/pose`），调用时需 `encodeURIComponent`。
 
 ---
 
@@ -141,9 +191,9 @@ npm run verify   # 另开终端：HTTP 自检（健康/查询/演示写入链路
 dds-light-monitor/
 ├── package.json            # npm workspaces（server + web）
 ├── config/config.json      # 外置配置（目录/防护参数/别名表/LJDDS split）
-├── server/                 # 后端（index/config/logger/parser/watcher/store/sse/routes/demo）
+├── server/                 # 后端（index/config/logger/parser/watcher/store/aggregate/compatibility/sse/routes/demo）
 │   └── public/             # Vite 预构建产物（生产直接托管）
-├── web/                    # React + Vite 前端
+├── web/                    # React + Vite 前端（DomainList / DrawerStack / DomainDetail / ParticipantDetail / TopicDetail / IpTopicGraph / CompatibilityPanel）
 ├── data/incoming/          # 默认监听目录（示例 XML / 挂载点）
 ├── scripts/                # dev.mjs / selfcheck.mjs
 ├── Dockerfile / docker-compose.yml

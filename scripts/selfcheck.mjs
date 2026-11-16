@@ -35,6 +35,24 @@ async function run() {
   const config = await req('GET', '/api/config');
   failures.push(check('配置查询 /api/config', config.status === 200 && config.body.ok, `watchDir=${config.body.config && config.body.config.watchDir}`));
 
+  // --- v1.1：域 / 主题 / 兼容性接口 ---
+  const domains = await req('GET', '/api/domains');
+  failures.push(check('域列表 /api/domains', domains.status === 200 && domains.body.ok && Array.isArray(domains.body.domains), `域数=${(domains.body.domains || []).length}`));
+
+  const domId = (domains.body.domains && domains.body.domains[0] && domains.body.domains[0].domainId) || '0';
+  const domainDetail = await req('GET', `/api/domains/${domId}`);
+  failures.push(check('域详情 /api/domains/:id', domainDetail.status === 200 && domainDetail.body.ok && Array.isArray(domainDetail.body.participants), `参与者=${(domainDetail.body.participants || []).length}`));
+
+  const topicName = (domainDetail.body.topics && domainDetail.body.topics[0] && domainDetail.body.topics[0].name) || 'rt/vehicle/pose';
+  const topicDetail = await req('GET', `/api/domains/${domId}/topics/${encodeURIComponent(topicName)}`);
+  failures.push(check('主题详情 /api/domains/:id/topics/:name', topicDetail.status === 200 && topicDetail.body.ok && Array.isArray(topicDetail.body.sendIps), `发送IP=${(topicDetail.body.sendIps || []).length} 接收IP=${(topicDetail.body.receiveIps || []).length}`));
+
+  const compat = await req('GET', `/api/domains/${domId}/topics/${encodeURIComponent(topicName)}/compatibility`);
+  failures.push(check('兼容性 /compatibility', compat.status === 200 && compat.body.ok && ['COMPATIBLE', 'PARTIAL', 'INCOMPATIBLE', 'UNKNOWN'].includes(compat.body.verdict), `verdict=${compat.body.verdict}`));
+
+  const ips = await req('GET', '/api/ips');
+  failures.push(check('IP 清单 /api/ips', ips.status === 200 && ips.body.ok && Array.isArray(ips.body.ips), `IP数=${(ips.body.ips || []).length}`));
+
   // 等待慢速写入完成，验证防半截：期间不应有半截记录
   console.log('\n  等待 2s 让慢速写入完成…');
   await new Promise((r) => setTimeout(r, 2000));

@@ -176,3 +176,84 @@ tbody tr:hover { background: var(--bg-panel-2); cursor: pointer; }
   .mid-grid { grid-template-columns: 1fr; }
   .dist-grid { grid-template-columns: 1fr; }
 }
+
+/* ============ v1.1 多层级抽屉下钻 ============ */
+.dim { color: var(--text-dim); }
+.link-btn { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 12px; }
+.link-btn:hover { text-decoration: underline; }
+
+/* 域级列表（L0） */
+.domain-total { padding: 10px 14px; }
+.domain-total-label { color: var(--text-dim); font-size: 12px; }
+.domain-total-label b { color: var(--text); }
+.domain-id { font-weight: 600; color: var(--accent); }
+.ip-cell { font-size: 11px; }
+.ip-more { color: var(--accent); }
+.incompat-count { color: var(--err); font-weight: 600; }
+.incompat-text { color: var(--err); }
+
+/* 抽屉面包屑 */
+.drawer-crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.crumb { color: var(--accent); cursor: pointer; font-size: 13px; }
+.crumb:hover { text-decoration: underline; }
+.crumb-sep { color: var(--text-dim); margin: 0 2px; }
+.drawer-head-actions { display: flex; align-items: center; gap: 8px; }
+
+/* 域详情头部汇总 */
+.domain-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.summary-main { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.summary-main b { color: var(--text); }
+.summary-sub { font-size: 12px; }
+.drawer-filter { margin: 8px 16px; }
+.drawer-filter input { flex: 1; min-width: 160px; }
+.list-body { padding: 0 16px 16px; }
+
+/* 结论徽标（FR-06-34 同一色板） */
+.verdict { font-weight: 600; }
+.v-compatible { background: rgba(47,191,143,.15); color: var(--ok); }
+.v-partial { background: rgba(224,160,60,.15); color: var(--warn); }
+.v-incompatible { background: rgba(224,96,95,.15); color: var(--err); }
+.v-unknown { background: rgba(107,114,128,.2); color: var(--unknown); }
+
+/* QoS 明细 / 键值 */
+.qos-table { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; padding: 0 16px 12px; }
+.kv { background: var(--bg-panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+.kv-label { color: var(--text-dim); font-size: 11px; margin-right: 8px; }
+.kv-value { color: var(--text); font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.section-title { color: var(--text-dim); font-size: 12px; font-weight: 600; padding: 12px 16px 6px; }
+.ptopic-section { padding-bottom: 4px; }
+
+/* IP 列表 / 主题详情 */
+.ip-list { padding: 0 16px; }
+.guid-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qos-summary { color: var(--text-dim); font-size: 11px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unknown-ip-hint { padding: 4px 16px; }
+
+/* 收发关系图 */
+.graph-wrap { padding: 8px 16px; }
+.iptopic-svg { width: 100%; height: auto; display: block; background: var(--bg-panel-2); border: 1px solid var(--border); border-radius: 8px; }
+
+/* 兼容性面板 */
+.compat-panel { padding: 0 16px 16px; }
+.compat-head { display: flex; align-items: center; gap: 12px; padding-bottom: 8px; }
+.pair-card { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; background: var(--bg-panel-2); }
+.pair-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; flex-wrap: wrap; }
+.pair-toggle { color: var(--text-dim); }
+.pair-body { border-top: 1px solid var(--border); padding: 8px; overflow-x: auto; }
+.pair-body table { min-width: 560px; }
+.check-pass { border-left: 3px solid var(--ok); }
+.check-fail { border-left: 3px solid var(--err); background: rgba(224,96,95,.06); }
+.check-missing { border-left: 3px solid var(--unknown); }
+.rule-text { color: var(--text-dim); font-size: 11px; }
+.check-tag { padding: 1px 8px; border-radius: 999px; font-size: 11px; }
+.tag-pass { background: rgba(47,191,143,.15); color: var(--ok); }
+.tag-fail { background: rgba(224,96,95,.15); color: var(--err); }
+.tag-missing { background: rgba(107,114,128,.2); color: var(--unknown); }
+
+/* 辅助区折叠开关 */
+.aux-toggle { display: flex; }
+.aux-toggle button { background: var(--bg-panel); }
+
+/* 抽屉内表格横向滚动 */
+.drawer-body table { font-size: 12px; }
+.drawer-body .table-scroll, .drawer-body { overflow: auto; }

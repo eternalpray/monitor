@@ -10,10 +10,11 @@ const { createParser } = require('./parser');
 const { Store } = require('./store');
 const { SseHub } = require('./sse');
 const { Watcher } = require('./watcher');
+const { Aggregator } = require('./aggregate');
 const { createRouter } = require('./routes');
 const { createDemo } = require('./demo');
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const ROOT = path.resolve(__dirname, '..');
 
 function main() {
@@ -26,11 +27,35 @@ function main() {
   const parser = createParser(config);
   const sseHub = new SseHub();
   const watcher = new Watcher(configManager, parser, store);
+  const aggregator = new Aggregator(configManager);
   const demo = createDemo(configManager);
 
   configManager.attachWatcher(watcher);
 
-  // --- 事件接线：监听 → 存储 → SSE 广播 ---
+  // --- 域相关 SSE 事件节流（FR-04-7，默认 200ms 合并） ---
+  let pendingDomains = new Set();
+  let flushTimer = null;
+  function scheduleDomainBroadcast(domainId) {
+    pendingDomains.add(domainId);
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      const changed = Array.from(pendingDomains);
+      pendingDomains = new Set();
+      sseHub.broadcast('domains', { domains: aggregator.listDomains().domains, revision: aggregator.revision });
+      for (const d of changed) {
+        const detail = aggregator.getDomain(d);
+        if (detail) sseHub.broadcast('domainDetail', { domainId: d, ...detail });
+      }
+    }, config.domainEventThrottleMs);
+  }
+
+  // --- 事件接线：监听 → 存储 → 聚合 → SSE 广播 ---
+  store.on('record', (record) => {
+    aggregator.add(record);
+    scheduleDomainBroadcast(record.domainId);
+  });
+
   watcher.on('records', (payload) => {
     sseHub.broadcast('records', payload);
     sseHub.broadcast('stats', store.getStats());
@@ -47,7 +72,7 @@ function main() {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
 
-  const router = createRouter({ store, configManager, watcher, sseHub, demo, logger, version: VERSION });
+  const router = createRouter({ store, configManager, watcher, sseHub, demo, logger, aggregator, version: VERSION });
   app.use(router);
 
   // SSE 长连接
@@ -64,6 +89,7 @@ function main() {
       stats: store.getStats(),
       config: configManager.public(),
       watcher: watcher.getStatus(),
+      domains: aggregator.listDomains().domains,
     });
   });
 
@@ -94,6 +120,9 @@ function main() {
     logger.error('unhandled', { msg: err.message, stack: err.stack });
     res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '服务内部错误' } });
   });
+
+  // 冷启动种子：写入演示数据集（幂等，仅在缺失时写入），保证首次打开即有域可看
+  try { demo.seedDataset(); } catch (err) { logger.warn('seed-demo', { msg: err.message }); }
 
   // 启动监听 + 服务器
   watcher.start();

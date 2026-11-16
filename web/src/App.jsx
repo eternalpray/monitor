@@ -8,10 +8,15 @@ import FilterBar from './components/FilterBar.jsx';
 import RecordsTable from './components/RecordsTable.jsx';
 import DetailDrawer from './components/DetailDrawer.jsx';
 import AlertBar from './components/AlertBar.jsx';
+import DomainList from './components/DomainList.jsx';
+import DomainDetail from './components/DomainDetail.jsx';
+import ParticipantDetail from './components/ParticipantDetail.jsx';
+import TopicDetail from './components/TopicDetail.jsx';
 
 const MAX_CLIENT_RECORDS = 5000;
 
 export default function App() {
+  const [domains, setDomains] = useState([]);
   const [records, setRecords] = useState([]);
   const [stats, setStats] = useState(null);
   const [config, setConfig] = useState(null);
@@ -22,6 +27,13 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [metricNames, setMetricNames] = useState([]);
   const [series, setSeries] = useState({ metric: null, points: [] });
+  const [showLive, setShowLive] = useState(false);
+  const [revision, setRevision] = useState(0);
+
+  // 抽屉层级：L1 = openDomain；L2 = openParticipant 或 openTopic
+  const [openDomain, setOpenDomain] = useState(null);
+  const [openParticipant, setOpenParticipant] = useState(null);
+  const [openTopic, setOpenTopic] = useState(null);
 
   const seenIds = useRef(new Set());
 
@@ -32,7 +44,6 @@ export default function App() {
       for (const r of fresh) seenIds.current.add(r.id);
       if (!fresh.length) return prev;
       const next = [...fresh, ...prev];
-      // 客户端也做环形裁剪，避免内存增长
       if (next.length > MAX_CLIENT_RECORDS) {
         const removed = next.slice(MAX_CLIENT_RECORDS);
         for (const r of removed) seenIds.current.delete(r.id);
@@ -48,10 +59,10 @@ export default function App() {
       snapshot: (data) => {
         seenIds.current = new Set();
         if (Array.isArray(data.records)) {
-          const ids = data.records.map((r) => r.id);
-          seenIds.current = new Set(ids);
+          seenIds.current = new Set(data.records.map((r) => r.id));
           setRecords(data.records);
         }
+        if (Array.isArray(data.domains)) setDomains(data.domains);
         setStats(data.stats);
         setConfig(data.config);
         setWatcher(data.watcher);
@@ -60,16 +71,32 @@ export default function App() {
       records: (data) => mergeRecords(data.records),
       stats: (d) => setStats(d),
       watcher: (d) => setWatcher(d),
+      domains: (d) => {
+        if (Array.isArray(d.domains)) setDomains(d.domains);
+        setRevision((r) => r + 1);
+      },
+      domainDetail: () => setRevision((r) => r + 1),
       alert: (d) => setAlerts((prev) => [{ id: Date.now() + '-' + Math.random(), ...d }, ...prev].slice(0, 50)),
       onState: (s) => setConnState(s === 'connected' ? 'connected' : 'reconnecting'),
     });
     return () => sub.close();
   }, [mergeRecords]);
 
-  // 初次加载指标名
   useEffect(() => {
     api.metrics().then((r) => setMetricNames(r.metrics || [])).catch(() => {});
   }, []);
+
+  // ESC 逐级关闭抽屉（DR-2）
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (openParticipant) { setOpenParticipant(null); return; }
+      if (openTopic) { setOpenTopic(null); return; }
+      if (openDomain) setOpenDomain(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openDomain, openParticipant, openTopic]);
 
   const filtered = useMemo(() => {
     return records.filter((r) => {
@@ -97,6 +124,16 @@ export default function App() {
     catch (e) { setAlerts((p) => [{ id: Date.now(), level: 'error', message: e.message }, ...p].slice(0, 50)); }
   }, []);
 
+  const openParticipantAt = useCallback((guid) => {
+    setOpenTopic(null);
+    setOpenParticipant({ domainId: openDomain, guid });
+  }, [openDomain]);
+
+  const openTopicAt = useCallback((name) => {
+    setOpenParticipant(null);
+    setOpenTopic({ domainId: openDomain, name });
+  }, [openDomain]);
+
   return (
     <div className="app">
       <TopBar
@@ -112,23 +149,54 @@ export default function App() {
 
       <AlertBar alerts={alerts} onDismiss={(id) => setAlerts((p) => p.filter((a) => a.id !== id))} />
 
-      <OverviewCards stats={stats} />
+      <OverviewCards domains={domains} stats={stats} />
 
-      <div className="mid-grid">
-        <TrendChart metricNames={metricNames} series={series} onSelect={loadSeries} />
-        <Distribution stats={stats} />
+      <DomainList domains={domains} onOpen={setOpenDomain} />
+
+      <div className="aux-toggle">
+        <button onClick={() => setShowLive((s) => !s)}>
+          {showLive ? '▾' : '▸'} 实时数据流 / 趋势（辅助）
+        </button>
       </div>
+      {showLive && (
+        <>
+          <div className="mid-grid">
+            <TrendChart metricNames={metricNames} series={series} onSelect={loadSeries} />
+            <Distribution stats={stats} />
+          </div>
+          <FilterBar filters={filters} setFilters={setFilters} nodes={nodes} topics={topics} total={records.length} shown={filtered.length} />
+          <RecordsTable records={filtered} onSelect={setSelected} />
+        </>
+      )}
 
-      <FilterBar
-        filters={filters}
-        setFilters={setFilters}
-        nodes={nodes}
-        topics={topics}
-        total={records.length}
-        shown={filtered.length}
-      />
+      {openDomain && (
+        <DomainDetail
+          domainId={openDomain}
+          revision={revision}
+          onClose={() => setOpenDomain(null)}
+          onOpenParticipant={openParticipantAt}
+          onOpenTopic={openTopicAt}
+        />
+      )}
 
-      <RecordsTable records={filtered} onSelect={setSelected} />
+      {openParticipant && (
+        <ParticipantDetail
+          domainId={openParticipant.domainId}
+          guid={openParticipant.guid}
+          onClose={() => { setOpenParticipant(null); setOpenDomain(null); }}
+          onBack={() => setOpenParticipant(null)}
+          onOpenTopic={openTopicAt}
+        />
+      )}
+
+      {openTopic && (
+        <TopicDetail
+          domainId={openTopic.domainId}
+          name={openTopic.name}
+          onClose={() => { setOpenTopic(null); setOpenDomain(null); }}
+          onBack={() => setOpenTopic(null)}
+        />
+      )}
 
       {selected && <DetailDrawer record={selected} onClose={() => setSelected(null)} />}
     </div>

@@ -20,7 +20,14 @@ const DEFAULTS = {
   maxFileSize: 2097152,
   maxMetricsPerRecord: 160,
   maxTopicsPerRecord: 40,
+  maxParticipantsPerRecord: 100,
+  maxEndpointsPerRecord: 200,
+  maxPairsPerTopic: 400,
   maxParseDepth: 64,
+  domainWindowSec: 300,
+  domainWindowRecords: 500,
+  domainEventThrottleMs: 200,
+  compatRules: null,
   ignorePatterns: [],
   fieldAliases: {},
   statusMapping: {},
@@ -31,7 +38,8 @@ const DEFAULTS = {
 const NUM_KEYS = [
   'port', 'bufferSize', 'detailRetainCount', 'stabilityThreshold', 'pollInterval',
   'debounceMs', 'readRecheckDelay', 'maxRetries', 'maxXmlPreviewBytes', 'maxFileSize',
-  'maxMetricsPerRecord', 'maxTopicsPerRecord', 'maxParseDepth',
+  'maxMetricsPerRecord', 'maxTopicsPerRecord', 'maxParticipantsPerRecord', 'maxEndpointsPerRecord',
+  'maxPairsPerTopic', 'maxParseDepth', 'domainWindowSec', 'domainWindowRecords', 'domainEventThrottleMs',
 ];
 
 class ConfigManager {
@@ -99,6 +107,12 @@ class ConfigManager {
       maxRetries: c.maxRetries,
       maxXmlPreviewBytes: c.maxXmlPreviewBytes,
       maxFileSize: c.maxFileSize,
+      maxParticipantsPerRecord: c.maxParticipantsPerRecord,
+      maxEndpointsPerRecord: c.maxEndpointsPerRecord,
+      maxPairsPerTopic: c.maxPairsPerTopic,
+      domainWindowSec: c.domainWindowSec,
+      domainWindowRecords: c.domainWindowRecords,
+      domainEventThrottleMs: c.domainEventThrottleMs,
       ignorePatterns: c.ignorePatterns.slice(),
       fieldAliases: c.fieldAliases,
     };
@@ -109,7 +123,7 @@ class ConfigManager {
     if (!patch || typeof patch !== 'object') {
       return { ok: false, code: 'INVALID_CONFIG', message: '请求体必须为 JSON 对象' };
     }
-    const allowed = ['watchDir', 'stabilityThreshold', 'pollInterval', 'debounceMs', 'bufferSize', 'detailRetainCount', 'recursive'];
+    const allowed = ['watchDir', 'stabilityThreshold', 'pollInterval', 'debounceMs', 'bufferSize', 'detailRetainCount', 'recursive', 'domainWindowSec', 'domainWindowRecords', 'domainEventThrottleMs'];
     const next = Object.assign({}, this.config);
     for (const k of Object.keys(patch)) {
       if (!allowed.includes(k)) {

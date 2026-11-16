@@ -18,7 +18,14 @@
   "maxFileSize": 2097152,
   "maxMetricsPerRecord": 160,
   "maxTopicsPerRecord": 40,
+  "maxParticipantsPerRecord": 100,
+  "maxEndpointsPerRecord": 200,
+  "maxPairsPerTopic": 400,
   "maxParseDepth": 64,
+
+  "domainWindowSec": 300,
+  "domainWindowRecords": 500,
+  "domainEventThrottleMs": 200,
 
   "ignorePatterns": [
     "**/*.tmp",
@@ -40,7 +47,15 @@
     "seq": ["seq", "sequence", "seqNo", "seqNum", "index", "frameId", "counter", "sn"],
     "status": ["status", "state", "health", "level", "result", "condition", "online"],
     "topic": ["topic", "topicName", "topic_name", "topicId"],
-    "type": ["type", "typeName", "type_name", "dataType"]
+    "type": ["type", "typeName", "type_name", "dataType"],
+    "participant": ["participant", "domainParticipant", "participantName", "participantId", "dp"],
+    "guid": ["guid", "participantGuid", "participantId", "guidPrefix", "endpointGuid"],
+    "ip": ["ip", "address", "ipAddress", "hostAddress", "addr", "unicast", "locator"],
+    "writer": ["writer", "publisher", "pub", "dataWriter", "sender", "senders", "dw"],
+    "reader": ["reader", "subscriber", "sub", "dataReader", "receiver", "receivers", "dr"],
+    "role": ["role", "kind", "direction", "endpointType"],
+    "qos": ["qos", "qosProfile", "qualityOfService", "qosPolicy"],
+    "partition": ["partition", "partitions", "partitionName"]
   },
 
   "statusMapping": {
