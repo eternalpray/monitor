@@ -192,6 +192,11 @@ function normEnum(raw, dimension) {
   const up = s.toUpperCase();
   const map = QOS_ENUM_ALIASES[dimension] || {};
   if (map[up]) return map[up];
+  // 拼写容错：现场采集节点偶有 RELIABALIE 等笔误
+  if (dimension === 'reliability') {
+    if (/^RELIAB/.test(up)) return 'RELIABLE';
+    if (/^BEST/.test(up)) return 'BEST_EFFORT';
+  }
   return s; // 无法识别 → 保留原值（调用方标记未标准化）
 }
 
@@ -523,6 +528,174 @@ function extractHostFromGuid(metrics) {
 }
 
 // ---------------------------------------------------------------------------
+// 新格式：ljdds_monitor_service → service_data → domain[] 专用解析
+// participant / endpoint 富化 + 在线/离线推导（按 界面文档.txt）
+// ---------------------------------------------------------------------------
+
+// "2026-11-13 16:12:53"（朴素本地时间）→ Date
+function parseLocalDateTime(s) {
+  if (!s) return null;
+  const str = String(s).trim();
+  if (!str) return null;
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  const d = new Date(str.replace(' ', 'T'));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// 在线判定：下线时间为空或大于当前系统时间 → 在线；小于当前系统时间 → 下线
+function computeOnline(downlineTimestamp) {
+  if (!downlineTimestamp || !String(downlineTimestamp).trim()) return true;
+  const d = parseLocalDateTime(downlineTimestamp);
+  if (d == null) return true; // 无法解析按下线时间为空处理
+  return d.getTime() > Date.now();
+}
+
+// 提取某类 locator 容器（metatraffic_unicast_locators 等）为 [{type,port,address}]
+function extractLocators(obj, key) {
+  const container = obj && obj[key] ? obj[key] : null;
+  if (!container || typeof container !== 'object') return [];
+  const els = toArray(container.element);
+  return els
+    .map((e) => ({
+      type: getVal(e, ['type']),
+      port: getVal(e, ['port']),
+      address: getVal(e, ['address']),
+    }))
+    .filter((x) => x.type != null || x.port != null || x.address != null);
+}
+
+function buildServiceParticipant(obj) {
+  const guid = getVal(obj, ['guid']);
+  const host = getVal(obj, ['host']); // host value = 节点 IP
+  const name = getVal(obj, ['entity_name', 'name']);
+  const rtps = getVal(obj, ['rtps_version']);
+  const vendorObj = obj && obj.vendor_id ? obj.vendor_id : null;
+  const vendorValue = vendorObj && vendorObj['@_value'] !== undefined ? String(vendorObj['@_value']) : null;
+  const vendorName = vendorObj && vendorObj['@_name'] !== undefined ? String(vendorObj['@_name']) : null;
+
+  let onlineTimestamp = null;
+  let downlineTimestamp = null;
+  const oi = obj && obj.online_info ? obj.online_info : null;
+  if (oi) {
+    const first = toArray(oi.element)[0];
+    if (first) {
+      onlineTimestamp = first['@_online_timestamp'] != null ? String(first['@_online_timestamp']) : null;
+      downlineTimestamp = first['@_downline_timestamp'] != null ? String(first['@_downline_timestamp']) : null;
+    }
+  }
+  const online = computeOnline(downlineTimestamp);
+  const ip = (host && isValidIp(host) && host) || ipFromGuid(guid);
+
+  if (!guid && !ip && !name) return null;
+
+  return {
+    guid: guid != null ? String(guid) : null,
+    name: name != null ? String(name) : null,
+    ip,
+    host: host != null ? String(host) : null,
+    vendorValue,
+    vendorName,
+    vendor: vendorName || vendorValue,
+    rtpsVersion: rtps != null ? String(rtps) : null,
+    onlineTimestamp,
+    downlineTimestamp,
+    online,
+    status: online ? 'OK' : 'ERROR',
+    statusRaw: online ? 'ONLINE' : 'OFFLINE',
+    locators: {
+      metatrafficUnicast: extractLocators(obj, 'metatraffic_unicast_locators'),
+      metatrafficMulticast: extractLocators(obj, 'metatraffic_multicast_locators'),
+      defaultUnicast: extractLocators(obj, 'default_unicast_locators'),
+      defaultMulticast: extractLocators(obj, 'default_multicast_locators'),
+    },
+    qos: {},
+  };
+}
+
+function extractServiceParticipants(domain) {
+  const items = collectItems(domain && domain.participant, ['element']);
+  const out = [];
+  const seen = new Set();
+  for (const it of items) {
+    const p = buildServiceParticipant(it);
+    if (!p) continue;
+    const key = p.guid || p.ip;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    out.push(p);
+  }
+  return out;
+}
+
+function buildServiceEndpoint(obj) {
+  const guid = getVal(obj, ['guid']);
+  const role = detectRole(obj); // 读取 endpoint_type 的 datawriter/datareader
+  const participantGuid = getVal(obj, ['pubsub_guid', 'participantGuid']);
+  const topic = getVal(obj, ['topic_name', 'topicName', 'topic']);
+  const type = getVal(obj, ['type_name', 'typeName', 'type']);
+  const idlfile = getVal(obj, ['idlfile']);
+  const ip = ipFromGuid(guid) || ipFromGuid(participantGuid);
+
+  const qosObj = obj && obj.qos ? obj.qos : null;
+  const entityName = getVal(qosObj, ['entity_name']);
+  const reliability = normEnum(getVal(qosObj, ['reliability']), 'reliability');
+  const durability = normEnum(getVal(qosObj, ['durability']), 'durability');
+  const ownership = normEnum(getVal(qosObj, ['ownership']), 'ownership');
+  const ownershipStrength = getVal(qosObj, ['ownership_strength', 'ownershipStrength']);
+  const historyKind = getVal(qosObj, ['durability_service_history_kind']);
+  const historyDepth = getVal(qosObj, ['durability_service_history_depth']);
+
+  if (!guid && !topic && !participantGuid) return null;
+
+  return {
+    guid: guid != null ? String(guid) : null,
+    role,
+    participantGuid: participantGuid != null ? String(participantGuid) : null,
+    topic: topic != null ? String(topic) : null,
+    type: type != null ? String(type) : null,
+    idlfile: idlfile != null ? String(idlfile) : null,
+    ip,
+    entityName: entityName != null ? String(entityName) : null,
+    status: 'OK',
+    qos: {
+      reliability,
+      durability,
+      ownership,
+      ownershipStrength: ownershipStrength != null ? (isNumeric(ownershipStrength) ? Number(ownershipStrength) : String(ownershipStrength)) : undefined,
+      durabilityServiceHistoryKind: historyKind != null ? String(historyKind) : undefined,
+      durabilityServiceHistoryDepth: historyDepth != null ? (isNumeric(historyDepth) ? Number(historyDepth) : String(historyDepth)) : undefined,
+    },
+  };
+}
+
+function extractServiceEndpoints(domain) {
+  const items = collectItems(domain && domain.endpoint, ['element']);
+  const out = [];
+  const seen = new Set();
+  for (const it of items) {
+    const e = buildServiceEndpoint(it);
+    if (!e) continue;
+    const key = e.guid || `${e.participantGuid || ''}|${e.topic || ''}|${e.role}`;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    out.push(e);
+  }
+  return out;
+}
+
+// 从端点去重推导主题（name|type）
+function deriveTopicsFromEndpoints(endpoints) {
+  const map = new Map();
+  for (const e of endpoints) {
+    if (!e.topic) continue;
+    const key = `${e.topic}|${e.type || ''}`;
+    if (!map.has(key)) map.set(key, { name: e.topic, type: e.type });
+  }
+  return Array.from(map.values());
+}
+
+// ---------------------------------------------------------------------------
 // 主解析器
 // ---------------------------------------------------------------------------
 function createParser(config) {
@@ -660,17 +833,11 @@ function createParser(config) {
     const rootName = Object.keys(tree)[0] || 'root';
     // 拆掉根元素，使 split/context 路径相对文档根、不绑定具体根标签名（更通用）
     const doc = tree[rootName] || tree;
-    const records = splitRecords(doc);
     const parseMs = Date.now() - start;
 
     const rawXmlPreview = xml.length > config.maxXmlPreviewBytes
       ? xml.slice(0, config.maxXmlPreviewBytes)
       : xml;
-
-    // 文档级提取（FR-02-11~14）：从整棵文档树提取参与者/端点，收集非法值
-    const dropped = [];
-    const docParticipants = extractParticipants(doc, aliases, dropped).slice(0, config.maxParticipantsPerRecord);
-    const docEndpoints = extractEndpoints(doc, aliases, dropped).slice(0, config.maxEndpointsPerRecord);
 
     const fileMetaFull = {
       filePath: fileMeta.filePath,
@@ -684,12 +851,82 @@ function createParser(config) {
       parseMs,
     };
 
-    return records
-      .map((r, i) => buildRecord(r, fileMetaFull, i, docParticipants, docEndpoints, dropped))
-      .map((rec) => {
-        rec.rootName = rootName;
-        return rec;
+    // 新格式：ljdds_monitor_service → service_data → domain[]（单文件多域）
+    if (doc && typeof doc === 'object' && doc.service_data) {
+      return parseLjddsService(doc, fileMetaFull, rootName);
+    }
+
+    // 其它格式（旧版 domain_snapshot / dds:snapshot）不再解析，静默忽略。
+    return [];
+  }
+
+  // 新格式解析入口：每域产出 1 条记录，携带该域全部 participants/endpoints/topics
+  function parseLjddsService(doc, fileMetaFull, rootName) {
+    const sd = doc.service_data || {};
+    const domainCountRaw = sd['@_domain_count'];
+    const domainCount = domainCountRaw != null ? String(domainCountRaw) : null;
+    const domains = toArray(sd.domain);
+    const records = [];
+
+    domains.forEach((domain, di) => {
+      const domainId = domain && domain['@_value'] != null
+        ? String(domain['@_value'])
+        : String(di);
+
+      const participants = extractServiceParticipants(domain).slice(0, config.maxParticipantsPerRecord);
+      const endpoints = extractServiceEndpoints(domain).slice(0, config.maxEndpointsPerRecord);
+      const topics = deriveTopicsFromEndpoints(endpoints).slice(0, config.maxTopicsPerRecord);
+
+      const idSrc = `${fileMetaFull.filePath}|${fileMetaFull.mtimeMs}|${fileMetaFull.size}|${domainId}`;
+      const id = crypto.createHash('sha1').update(idSrc).digest('hex').slice(0, 20);
+
+      let timestampRaw = null;
+      for (const p of participants) {
+        if (p.onlineTimestamp) { timestampRaw = p.onlineTimestamp; break; }
+      }
+      const timestampIso = normalizeTimestamp(timestampRaw) || fileMetaFull.mtimeIso;
+
+      records.push({
+        id,
+        receivedAt: fileMetaFull.receivedAt,
+        timestampIso,
+        timestampRaw,
+        node: 'ljdds-monitor',
+        domain: domainId,
+        domainId,
+        seq: null,
+        status: 'OK',
+        statusRaw: null,
+        kind: 'domain',
+        typeName: null,
+        rootName,
+        topics,
+        participants,
+        endpoints,
+        droppedFields: [],
+        metrics: {
+          domain_count: domainCount != null ? Number(domainCount) || domainCount : domainCount,
+          participant_count: participants.length,
+          endpoint_count: endpoints.length,
+          topic_count: topics.length,
+        },
+        numericMetrics: {
+          participant_count: participants.length,
+          endpoint_count: endpoints.length,
+          topic_count: topics.length,
+        },
+        fileName: fileMetaFull.fileName,
+        filePath: fileMetaFull.filePath,
+        fileSize: fileMetaFull.size,
+        fileMtime: fileMetaFull.mtimeIso,
+        raw: null,
+        rawXml: fileMetaFull.rawXml,
+        xmlTruncated: fileMetaFull.xmlTruncated,
+        parseMs: fileMetaFull.parseMs,
       });
+    });
+
+    return records;
   }
 
   return { parse, decodeBuffer, flatten, extractStandardFields, normalizeStatus, normalizeTimestamp };

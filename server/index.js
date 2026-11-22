@@ -11,6 +11,7 @@ const { Store } = require('./store');
 const { SseHub } = require('./sse');
 const { Watcher } = require('./watcher');
 const { Aggregator } = require('./aggregate');
+const { AliasStore } = require('./aliases');
 const { createRouter } = require('./routes');
 const { createDemo } = require('./demo');
 
@@ -28,6 +29,7 @@ function main() {
   const sseHub = new SseHub();
   const watcher = new Watcher(configManager, parser, store);
   const aggregator = new Aggregator(configManager);
+  const aliases = new AliasStore(configManager);
   const demo = createDemo(configManager);
 
   configManager.attachWatcher(watcher);
@@ -72,7 +74,7 @@ function main() {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
 
-  const router = createRouter({ store, configManager, watcher, sseHub, demo, logger, aggregator, version: VERSION });
+  const router = createRouter({ store, configManager, watcher, sseHub, demo, logger, aggregator, aliases, version: VERSION });
   app.use(router);
 
   // SSE 长连接

@@ -1,6 +1,8 @@
 import React from 'react';
+import { formatTopicName, useTopicRadix } from '../topicName.js';
 
 export default function FilterBar({ filters, setFilters, nodes, topics, total, shown }) {
+  const radix = useTopicRadix();
   const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
   const statuses = ['OK', 'WARN', 'ERROR', 'UNKNOWN'];
 
@@ -13,7 +15,7 @@ export default function FilterBar({ filters, setFilters, nodes, topics, total, s
 
       <select value={filters.topic} onChange={(e) => set('topic', e.target.value)}>
         <option value="">全部 Topic</option>
-        {topics.map((t) => <option key={t} value={t}>{t}</option>)}
+        {topics.map((t) => <option key={t} value={t}>{formatTopicName(t, radix)}</option>)}
       </select>
 
       <select value={filters.status} onChange={(e) => set('status', e.target.value)}>

@@ -2,7 +2,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -10,137 +9,179 @@ function fmtLocal(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function fmtIso(d) {
-  return d.toISOString();
-}
-
 function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 
 // ---------------------------------------------------------------------------
-// PRD 附录 C 风格的演示数据集：多域 + 多参与者 + 多 IP + 故意不兼容的 QoS 配对。
-// domain 0 与附录 C 完全一致（TC-23 / TC-28 / TC-29 / TC-30 的基准）。
+// 演示数据集：多域 + 多参与者 + 多 IP + 故意不兼容的 QoS 配对。
+// 输出格式与新采集节点一致（ljdds_monitor_service → service_data → domain）。
 // ---------------------------------------------------------------------------
 
-// 每个域由若干参与者与若干主题构成。
-// 参与者：{ guid, name, ip, host, pid, qos }
-// 主题：{ name, type, partition, qos, writers:[参与者下标], readers:[参与者下标] }
+// 每个域由若干参与者（节点）与若干主题（端点）构成。
+// 参与者：{ name, ip, host, pid, qos }；主题：{ name, type, writers:[{participant, qos, sampleRate}], readers:[{participant, qos}] }
 // 端点 QoS 可覆盖参与者 QoS（用于构造故意不兼容的配对）。
 const DOMAIN_SPECS = [
   {
     domainId: '0',
-    nodeId: 'collector-01',
     participants: [
-      { guid: '01.0f.aa.11.00.00.01|0.0.1', name: 'PubVehicle', ip: '192.168.1.11', host: 'ecu-01', pid: '2314', qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', deadline: 100, liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['veh'] } },
-      { guid: '01.0f.aa.17.00.00.01|0.0.2', name: 'SubMonitor', ip: '192.168.1.23', host: 'hmi-01', pid: '881', qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', deadline: 50, liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['veh'] } },
-      { guid: '01.0f.aa.18.00.00.01|0.0.3', name: 'Logger', ip: '192.168.1.24', host: 'log-01', pid: '902', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['veh'] } },
+      { name: 'PubVehicle', ip: '192.168.1.11', host: 'ecu-01', pid: '2314', qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', ownership: 'SHARED' } },
+      { name: 'SubMonitor', ip: '192.168.1.23', host: 'hmi-01', pid: '881', qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', ownership: 'SHARED' } },
+      { name: 'Logger', ip: '192.168.1.24', host: 'log-01', pid: '902', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', ownership: 'SHARED' } },
     ],
     topics: [
       {
-        name: 'rt/vehicle/pose', type: 'geometry::Pose', partition: 'veh',
-        qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', deadline: 100 },
+        name: 'rt/vehicle/pose', type: 'geometry::Pose',
         writers: [
-          { participant: 0, guid: '01.0f.aa.11.00.00.01|0.0.1.w1', qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', deadline: 100, liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['veh'] }, sampleRate: 50.2 },
+          { participant: 0, qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', ownership: 'SHARED' }, sampleRate: 50.2 },
         ],
         readers: [
-          { participant: 1, guid: '01.0f.aa.17.00.00.01|0.0.2.r1', qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', deadline: 50, liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['veh'] } },
-          { participant: 2, guid: '01.0f.aa.18.00.00.01|0.0.3.r1', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', deadline: 50, liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['veh'] } },
+          { participant: 1, qos: { reliability: 'RELIABLE', durability: 'TRANSIENT_LOCAL', ownership: 'SHARED' } },
+          { participant: 2, qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', ownership: 'SHARED' } },
         ],
       },
-      { name: 'rt/chassis/status', type: 'ChassisStatus', partition: 'veh', qos: {}, writers: [], readers: [] },
+      { name: 'rt/chassis/status', type: 'ChassisStatus', writers: [], readers: [] },
     ],
   },
   {
     domainId: '1',
-    nodeId: 'collector-01',
     participants: [
-      { guid: '01.0f.bb.11.00.00.01|0.1.1', name: 'Planner', ip: '10.0.0.11', host: 'planner-01', pid: '1101', qos: { reliability: 'RELIABLE', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['plan'] } },
-      { guid: '01.0f.bb.17.00.00.01|0.1.2', name: 'Executor', ip: '10.0.0.22', host: 'exec-01', pid: '2202', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['plan'] } },
+      { name: 'Planner', ip: '10.0.0.11', host: 'planner-01', pid: '1101', qos: { reliability: 'RELIABLE', durability: 'VOLATILE', ownership: 'SHARED' } },
+      { name: 'Executor', ip: '10.0.0.22', host: 'exec-01', pid: '2202', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', ownership: 'SHARED' } },
     ],
     topics: [
       {
-        name: 'plan/trajectory', type: 'Trajectory', partition: 'plan',
-        qos: {},
+        name: 'plan/trajectory', type: 'Trajectory',
         writers: [
-          { participant: 0, guid: '01.0f.bb.11.00.00.01|0.1.1.w1', qos: { reliability: 'RELIABLE', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['plan'] }, sampleRate: 20.0 },
+          { participant: 0, qos: { reliability: 'RELIABLE', durability: 'VOLATILE', ownership: 'SHARED' }, sampleRate: 20.0 },
         ],
         readers: [
           // 故意不兼容：订阅端要求 RELIABLE，发布端 BEST_EFFORT
-          { participant: 1, guid: '01.0f.bb.17.00.00.01|0.1.2.r1', qos: { reliability: 'RELIABLE', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['plan'] } },
+          { participant: 1, qos: { reliability: 'RELIABLE', durability: 'VOLATILE', ownership: 'SHARED' } },
         ],
       },
     ],
   },
   {
     domainId: '2',
-    nodeId: 'collector-02',
     participants: [
-      { guid: '01.0f.cc.11.00.00.01|0.2.1', name: 'Sensor', ip: '172.16.0.10', host: 'sensor-01', pid: '3101', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['raw'] } },
-      { guid: '01.0f.cc.17.00.00.01|0.2.2', name: 'Fusion', ip: '172.16.0.20', host: 'fusion-01', pid: '3202', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['raw'] } },
+      { name: 'Sensor', ip: '172.16.0.10', host: 'sensor-01', pid: '3101', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', ownership: 'SHARED' } },
+      { name: 'Fusion', ip: '172.16.0.20', host: 'fusion-01', pid: '3202', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', ownership: 'SHARED' } },
     ],
     topics: [
       {
-        name: 'raw/imu', type: 'ImuSample', partition: 'raw',
-        qos: {},
+        name: 'raw/imu', type: 'ImuSample',
         writers: [
-          { participant: 0, guid: '01.0f.cc.11.00.00.01|0.2.1.w1', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['raw'] }, sampleRate: 100.0 },
+          { participant: 0, qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', ownership: 'SHARED' }, sampleRate: 100.0 },
         ],
         readers: [
-          { participant: 1, guid: '01.0f.cc.17.00.00.01|0.2.2.r1', qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', liveliness: 'AUTOMATIC', ownership: 'SHARED', partition: ['raw'] } },
+          { participant: 1, qos: { reliability: 'BEST_EFFORT', durability: 'VOLATILE', ownership: 'SHARED' } },
         ],
       },
     ],
   },
 ];
 
-function qosAttrs(qos) {
-  if (!qos) return '';
+const VENDOR = { value: '0x0102', name: 'PrismTech Inc. - OpenSplice DDS' };
+
+// 生成 participant 的 RTPS guid：HostId=IP,AppId=N,InstanceId=1,EntityId=449
+function participantGuid(ip, appId) {
+  return `HostId=${ip},AppId=${appId},InstanceId=1,EntityId=449`;
+}
+
+function endpointGuid(ip, appId, entityId) {
+  return `HostId=${ip},AppId=${appId},InstanceId=1,EntityId=${entityId}`;
+}
+
+// QoS 归一为真实采集格式的值（reliability 会故意保留不兼容对）
+function qVal(qos, key, fallback) {
+  if (qos && qos[key]) return qos[key];
+  return fallback;
+}
+
+// <qos> 内部子元素
+function qosInner(qos, strength) {
+  const q = qos || {};
   const parts = [];
-  if (qos.reliability) parts.push(`reliability="${qos.reliability}"`);
-  if (qos.durability) parts.push(`durability="${qos.durability}"`);
-  if (qos.deadline != null) parts.push(`deadlineMs="${qos.deadline}"`);
-  if (qos.liveliness) parts.push(`liveliness="${qos.liveliness}"`);
-  if (qos.ownership) parts.push(`ownership="${qos.ownership}"`);
-  if (qos.partition) parts.push(`partition="${Array.isArray(qos.partition) ? qos.partition.join(',') : qos.partition}"`);
-  return parts.join(' ');
+  parts.push(`<entity_name value = "${q.entityName || 'Unknown Name'}"/>`);
+  parts.push(`<reliability>${qVal(q, 'reliability', 'RELIABLE')}</reliability>`);
+  parts.push(`<durability_service_history_kind>KEEP_LAST</durability_service_history_kind>`);
+  if (q.durability !== 'VOLATILE') parts.push(`<durability_service_history_depth>1</durability_service_history_depth>`);
+  parts.push(`<durability>${qVal(q, 'durability', 'VOLATILE')}</durability>`);
+  parts.push(`<ownership>${qVal(q, 'ownership', 'SHARED')}</ownership>`);
+  if (strength != null) parts.push(`<ownership_strength>${strength}</ownership_strength>`);
+  return parts.join('\n');
+}
+
+// 单类 locator 容器
+function locators(key, type, port, address) {
+  return `<${key} count = "1">\n<element>\n<type value = "${type}"/>\n<port value = "${port}"/>\n<address value = "${address}"/>\n</element>\n</${key}>`;
 }
 
 function buildDomainXml(spec, now) {
-  const participantsXml = spec.participants.map((p) => {
-    const a = qosAttrs(p.qos);
-    return `    <participant guid="${p.guid}" name="${p.name}" ip="${p.ip}" host="${p.host}" pid="${p.pid}" status="ALIVE">\n` +
-      `      <qos ${a}/>\n` +
-      `    </participant>`;
+  const domainId = Number(spec.domainId);
+  const base = 7400 + domainId * 100;
+  const multicast = `239.255.${domainId}.1`;
+
+  const participantsXml = spec.participants.map((p, i) => {
+    const appId = 1000 + i + domainId * 10;
+    const guid = participantGuid(p.ip, appId);
+    const loc = [
+      locators('metatraffic_unicast_locators', 'UDPv4', base + 10, p.ip),
+      locators('metatraffic_multicast_locators', 'UDPv4', base, multicast),
+      locators('default_unicast_locators', 'UDPv4', base + 11, p.ip),
+    ].join('\n');
+    return `  <element guid = "${guid}">
+    <online_info count = "1">
+      <element online_timestamp = "${fmtLocal(now)}" downline_timestamp = ""/>
+    </online_info>
+    <host value = "${p.ip}"/>
+    <entity_name value = "${p.name}"/>
+    <vendor_id value = "${VENDOR.value}" name = "${VENDOR.name}"/>
+    <rtps_version value = "0x0201"/>
+${loc}
+    <property count = "0">
+    </property>
+  </element>`;
   }).join('\n');
 
-  const topicsXml = spec.topics.map((t) => {
-    const writersXml = t.writers.map((w) => {
+  // 端点：datawriter / datareader
+  const endpointsXml = spec.topics.map((t) => {
+    const writerXml = (t.writers || []).map((w) => {
       const p = spec.participants[w.participant];
-      return `        <writer guid="${w.guid}" participantGuid="${p.guid}" ip="${p.ip}" status="ALIVE">\n` +
-        `          <qos ${qosAttrs(w.qos)}/>\n` +
-        `          <sampleRate unit="Hz">${(w.sampleRate + rand(-5, 5) / 10).toFixed(1)}</sampleRate>\n` +
-        `        </writer>`;
+      const appId = 1000 + w.participant + domainId * 10;
+      const guid = endpointGuid(p.ip, appId, 2147483651); // writer entity id
+      const pubsub = endpointGuid(p.ip, appId, 776);      // publisher
+      const strength = w.qos && w.qos.ownership === 'EXCLUSIVE' ? 2 : undefined;
+      return `  <element guid = "${guid}" endpoint_type = "datawriter" pubsub_guid = "${pubsub}" topic_name = "${t.name}" type_name = "${t.type}" idlfile = "">
+    <qos>
+${qosInner(w.qos, strength)}
+    </qos>
+  </element>`;
     }).join('\n');
-    const readersXml = t.readers.map((r) => {
+    const readerXml = (t.readers || []).map((r) => {
       const p = spec.participants[r.participant];
-      return `        <reader guid="${r.guid}" participantGuid="${p.guid}" ip="${p.ip}" status="ALIVE">\n` +
-        `          <qos ${qosAttrs(r.qos)}/>\n` +
-        `        </reader>`;
+      const appId = 1000 + r.participant + domainId * 10;
+      const guid = endpointGuid(p.ip, appId, 2147483652); // reader entity id
+      const pubsub = endpointGuid(p.ip, appId, 777);      // subscriber
+      const strength = r.qos && r.qos.ownership === 'EXCLUSIVE' ? 2 : undefined;
+      return `  <element guid = "${guid}" endpoint_type = "datareader" pubsub_guid = "${pubsub}" topic_name = "${t.name}" type_name = "${t.type}" idlfile = "">
+    <qos>
+${qosInner(r.qos, strength)}
+    </qos>
+  </element>`;
     }).join('\n');
-    const tqa = qosAttrs(t.qos);
-    const inner = [writersXml, readersXml].filter(Boolean).join('\n');
-    return `    <topic name="${t.name}" type="${t.type}" partition="${t.partition}">\n` +
-      `      <qos ${tqa}/>\n` +
-      (inner ? inner + '\n' : '') +
-      `    </topic>`;
+    return [writerXml, readerXml].filter(Boolean).join('\n');
   }).join('\n');
 
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<dds:snapshot xmlns:dds="urn:dds:monitor:1.0" nodeId="${spec.nodeId}" domainId="${spec.domainId}" ` +
-    `timestamp="${fmtIso(now)}" seq="${rand(1000, 9999)}" status="OK">\n` +
-    `  <participants>\n${participantsXml}\n  </participants>\n` +
-    `  <topics>\n${topicsXml}\n  </topics>\n` +
-    `</dds:snapshot>\n`
+    `<ljdds_monitor_service>\n` +
+    `  <service_data domain_count = "${DOMAIN_SPECS.length}">\n` +
+    `    <domain value = "${spec.domainId}">\n` +
+    `      <participant>\n${participantsXml}\n      </participant>\n` +
+    `      <endpoint>\n${endpointsXml}\n      </endpoint>\n` +
+    `    </domain>\n` +
+    `  </service_data>\n` +
+    `</ljdds_monitor_service>\n`
   );
 }
 
@@ -186,7 +227,7 @@ function createDemo(configManager) {
     return files;
   }
 
-  // 慢速分块写：验证 FR-01 不会把半截 XML 当有效数据
+  // 慢速分块写：验证不会把半截 XML 当有效数据
   function emitSlow(chunks, intervalMs) {
     ensureDir();
     const now = new Date();

@@ -3,6 +3,7 @@
 const express = require('express');
 const os = require('os');
 const path = require('path');
+const { INCOMPLETE_XML, FILE_TOO_LARGE } = require('./parser');
 
 // Topic 名常含 `/`（如 rt/vehicle/pose），URL 编码后由 Express 解码；此处做一次防御性解码。
 function decodeSegment(v) {
@@ -15,7 +16,7 @@ function decodeSegment(v) {
 }
 
 function createRouter(deps) {
-  const { store, configManager, watcher, sseHub, demo, logger, version, aggregator } = deps;
+  const { store, configManager, watcher, sseHub, demo, logger, version, aggregator, aliases } = deps;
   const router = express.Router();
 
   const ok = (data) => ({ ok: true, ...data });
@@ -81,6 +82,23 @@ function createRouter(deps) {
     res.json(ok(r));
   });
 
+  // 单文件导入：原始字节体 + X-File-Name 头（浏览器上传文件选择器）
+  router.post('/api/import', express.raw({
+    type: ['application/xml', 'text/xml', 'application/octet-stream'],
+    limit: (configManager.get().maxFileSize || 10485760) + 1024 * 1024,
+  }), (req, res) => {
+    const buf = req.body;
+    if (!buf || !buf.length) return fail(res, 400, 'EMPTY_FILE', '未收到文件内容');
+    try {
+      const r = watcher.importBuffer(buf, req.headers['x-file-name']);
+      res.json(ok(r));
+    } catch (err) {
+      if (err && err.code === INCOMPLETE_XML) return fail(res, 400, INCOMPLETE_XML, err.message);
+      if (err && err.code === FILE_TOO_LARGE) return fail(res, 413, FILE_TOO_LARGE, err.message);
+      return fail(res, 400, 'PARSE_ERROR', (err && err.message) || '解析失败');
+    }
+  });
+
   // 清空内存缓冲
   router.post('/api/clear', (req, res) => {
     const r = store.clear();
@@ -143,6 +161,52 @@ function createRouter(deps) {
   router.get('/api/ips', (req, res) => {
     const r = aggregator.listIps(req.query.domainId != null ? decodeSegment(req.query.domainId) : null, req.query.q);
     res.json(ok(r));
+  });
+
+  // ---- 需求 4/5：节点收发关系 + 主题↔IP 对应 ----
+
+  // 节点（IP）间收发关系（含自发自收）
+  router.get('/api/domains/:domainId/relations', (req, res) => {
+    const detail = aggregator.getNodeRelations(decodeSegment(req.params.domainId));
+    if (!detail) return fail(res, 404, 'DOMAIN_NOT_FOUND', `域 ${req.params.domainId} 在统计窗口内没有数据`);
+    res.json(ok(detail));
+  });
+
+  // 按 IP 查看：每个 IP 的发送/接收主题
+  router.get('/api/domains/:domainId/ip-topics', (req, res) => {
+    const r = aggregator.getIpTopics(decodeSegment(req.params.domainId));
+    res.json(ok(r));
+  });
+
+  // 单 IP 详情：发送主题 / 接收主题
+  router.get('/api/domains/:domainId/ips/:ip', (req, res) => {
+    const detail = aggregator.getIpDetail(decodeSegment(req.params.domainId), decodeSegment(req.params.ip));
+    if (!detail) return fail(res, 404, 'IP_NOT_FOUND', `IP ${req.params.ip} 在域 ${req.params.domainId} 内没有端点数据`);
+    res.json(ok(detail));
+  });
+
+  // 单 IP 交互节点：发给谁 / 收自谁（按主题归类）
+  router.get('/api/domains/:domainId/ips/:ip/interactions', (req, res) => {
+    const detail = aggregator.getIpInteractions(decodeSegment(req.params.domainId), decodeSegment(req.params.ip));
+    if (!detail) return fail(res, 404, 'IP_NOT_FOUND', `IP ${req.params.ip} 在域 ${req.params.domainId} 内没有端点数据`);
+    res.json(ok(detail));
+  });
+
+  // ---- IP 节点别名（需求 3） ----
+  router.get('/api/aliases', (req, res) => {
+    res.json(ok({ aliases: aliases.getAll() }));
+  });
+
+  router.put('/api/aliases', (req, res) => {
+    const body = req.body || {};
+    const r = aliases.set(body.ip, body.alias);
+    if (!r.ok) return fail(res, 400, r.code, r.message);
+    res.json(ok({ aliases: r.aliases }));
+  });
+
+  router.delete('/api/aliases/:ip', (req, res) => {
+    const r = aliases.remove(decodeSegment(req.params.ip));
+    res.json(ok({ aliases: r.aliases }));
   });
 
   // 演示数据：原子写

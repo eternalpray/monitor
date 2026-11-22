@@ -44,6 +44,26 @@ export const api = {
   topic: (id, name) => http(`/api/domains/${encodeURIComponent(id)}/topics/${encodeURIComponent(name)}`),
   topicCompatibility: (id, name) => http(`/api/domains/${encodeURIComponent(id)}/topics/${encodeURIComponent(name)}/compatibility`),
   ips: (domainId) => http(`/api/ips${domainId ? '?domainId=' + encodeURIComponent(domainId) : ''}`),
+
+  // ---- 单文件导入 + 节点关系 / 主题↔IP 对应 ----
+  importFile: (file, name) => fetch('/api/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': name || file.name },
+    body: file,
+  }).then(async (res) => {
+    const body = await res.json().catch(() => ({ ok: false }));
+    if (!res.ok || body.ok === false) throw new Error((body.error && body.error.message) || `导入失败 ${res.status}`);
+    return body;
+  }),
+  relations: (id) => http(`/api/domains/${encodeURIComponent(id)}/relations`),
+  ipTopics: (id) => http(`/api/domains/${encodeURIComponent(id)}/ip-topics`),
+  ipDetail: (id, ip) => http(`/api/domains/${encodeURIComponent(id)}/ips/${encodeURIComponent(ip)}`),
+  ipInteractions: (id, ip) => http(`/api/domains/${encodeURIComponent(id)}/ips/${encodeURIComponent(ip)}/interactions`),
+
+  // ---- IP 节点别名（需求 3） ----
+  aliases: () => http('/api/aliases'),
+  setAlias: (ip, alias) => http('/api/aliases', { method: 'PUT', body: JSON.stringify({ ip, alias }) }),
+  deleteAlias: (ip) => http(`/api/aliases/${encodeURIComponent(ip)}`, { method: 'DELETE' }),
 };
 
 // 订阅 SSE，返回 { close }。handler(event, data)

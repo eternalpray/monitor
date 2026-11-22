@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
+import { formatTopicName, useTopicRadix } from '../topicName.js';
 
-function barList(dist, color) {
+function barList(dist, color, fmtKey) {
   const entries = Object.entries(dist || {}).sort((a, b) => b[1] - a[1]).slice(0, 8);
   if (!entries.length) return <div className="placeholder">暂无分布数据</div>;
   const max = entries[0][1];
@@ -8,7 +9,7 @@ function barList(dist, color) {
     <div className="bars">
       {entries.map(([k, v]) => (
         <div className="bar-row" key={k}>
-          <span className="bar-label" title={k}>{k}</span>
+          <span className="bar-label" title={k}>{fmtKey ? fmtKey(k) : k}</span>
           <div className="bar-track">
             <div className="bar-fill" style={{ width: `${(v / max) * 100}%`, background: color }} />
           </div>
@@ -20,8 +21,9 @@ function barList(dist, color) {
 }
 
 export default function Distribution({ stats }) {
-  const nodes = useMemo(() => (stats ? barList(stats.nodeDistribution, '#8fd3bc') : null), [stats]);
-  const topics = useMemo(() => (stats ? barList(stats.topicDistribution, '#9db8e8') : null), [stats]);
+  const radix = useTopicRadix();
+  const nodes = useMemo(() => (stats ? barList(stats.nodeDistribution, '#8fd3bc', null) : null), [stats]);
+  const topics = useMemo(() => (stats ? barList(stats.topicDistribution, '#9db8e8', (k) => formatTopicName(k, radix)) : null), [stats, radix]);
 
   return (
     <div className="dist-grid">

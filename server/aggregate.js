@@ -166,11 +166,13 @@ class Aggregator {
     const topicCount = bucket.topics.size;
     let writerCount = 0;
     let readerCount = 0;
+    const pubTopics = new Set();
+    const subTopics = new Set();
     const endpointList = [];
     for (const e of bucket.endpoints.values()) {
       endpointList.push(e);
-      if (e.role === 'writer') writerCount++;
-      else if (e.role === 'reader') readerCount++;
+      if (e.role === 'writer') { writerCount++; if (e.topic) pubTopics.add(e.topic); }
+      else if (e.role === 'reader') { readerCount++; if (e.topic) subTopics.add(e.topic); }
     }
     const ips = Array.from(bucket.ips);
     const recordRate = bucket.recentTs.filter((t) => now - t < 60000).length;
@@ -199,6 +201,7 @@ class Aggregator {
 
     const status = hasError ? 'ERROR' : (hasWarn ? 'WARN' : 'OK');
     const ipsSorted = ips.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const info = this._computeDomainInfo(bucket);
     return {
       domainId: bucket.domainId,
       participantCount,
@@ -211,6 +214,65 @@ class Aggregator {
       incompatibleTopics,
       lastUpdate: bucket.lastUpdate,
       recordRate,
+      portRange: info.portRange,
+      multicastAddress: info.multicastAddress,
+      nodeCount: info.nodeCount,
+      nodeOnlineCount: info.nodeOnlineCount,
+      nodeOfflineCount: info.nodeOfflineCount,
+      participantOnlineCount: info.participantOnlineCount,
+      participantOfflineCount: info.participantOfflineCount,
+      vendorCounts: info.vendorCounts,
+      publishTopicCount: pubTopics.size,
+      subscribeTopicCount: subTopics.size,
+    };
+  }
+
+  // 域级元信息（从 participant 的 locator / 在线信息推导）
+  _computeDomainInfo(bucket) {
+    const ports = new Set();
+    let multicastAddress = null;
+    const vendorCounts = new Map();
+    const nodeOnline = new Map(); // ip -> 是否有在线参与者
+    let participantOnline = 0;
+    let participantOffline = 0;
+
+    for (const p of bucket.participants.values()) {
+      if (p.online) participantOnline++; else participantOffline++;
+      const vname = p.vendorName || p.vendor;
+      if (vname) vendorCounts.set(vname, (vendorCounts.get(vname) || 0) + 1);
+      if (p.ip) {
+        const cur = nodeOnline.get(p.ip);
+        if (cur === undefined) nodeOnline.set(p.ip, !!p.online);
+        else if (p.online) nodeOnline.set(p.ip, true);
+      }
+      const loc = p.locators || {};
+      for (const key of ['metatrafficUnicast', 'metatrafficMulticast', 'defaultUnicast', 'defaultMulticast']) {
+        for (const l of loc[key] || []) {
+          if (l.port != null && l.port !== '' && !Number.isNaN(Number(l.port))) ports.add(Number(l.port));
+        }
+      }
+      const mm = loc.metatrafficMulticast || [];
+      if (!multicastAddress && mm[0] && mm[0].address) multicastAddress = String(mm[0].address);
+    }
+
+    const portList = Array.from(ports).sort((a, b) => a - b);
+    const portRange = portList.length
+      ? (portList.length === 1 ? String(portList[0]) : `${portList[0]}-${portList[portList.length - 1]}`)
+      : null;
+
+    let nodeOnlineCount = 0;
+    let nodeOfflineCount = 0;
+    for (const v of nodeOnline.values()) { if (v) nodeOnlineCount++; else nodeOfflineCount++; }
+
+    return {
+      portRange,
+      multicastAddress,
+      vendorCounts: Object.fromEntries(Array.from(vendorCounts.entries()).sort((a, b) => b[1] - a[1])),
+      nodeCount: nodeOnline.size,
+      nodeOnlineCount,
+      nodeOfflineCount,
+      participantOnlineCount: participantOnline,
+      participantOfflineCount: participantOffline,
     };
   }
 
@@ -293,11 +355,14 @@ class Aggregator {
       participants.push({
         guid: p.guid, name: p.name, ip: p.ip, host: p.host, pid: p.pid,
         status: p.status, statusRaw: p.statusRaw, qos: p.qos,
+        vendor: p.vendor, vendorName: p.vendorName, vendorValue: p.vendorValue,
+        rtpsVersion: p.rtpsVersion,
+        online: p.online, onlineTimestamp: p.onlineTimestamp, downlineTimestamp: p.downlineTimestamp,
         publishedTopicCount: pub.size, subscribedTopicCount: sub.size,
         lastSeen: new Date(p.lastSeenMs).toISOString(),
       });
     }
-    participants.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    participants.sort((a, b) => (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true }));
 
     const topics = [];
     for (const t of bucket.topics.values()) {
@@ -312,7 +377,10 @@ class Aggregator {
     }
     topics.sort((a, b) => a.name.localeCompare(b.name));
 
-    return { summary, participants, topics, revision: this._revision };
+    const vendors = (summary.vendorCounts ? Object.entries(summary.vendorCounts) : [])
+      .map(([name, count]) => ({ name, count }));
+
+    return { summary, participants, topics, vendors, revision: this._revision };
   }
 
   _participantTopics(bucket, participant, role) {
@@ -320,7 +388,7 @@ class Aggregator {
     for (const e of bucket.endpoints.values()) {
       if (e.role !== role) continue;
       const matchGuid = participant.guid && e.participantGuid && e.participantGuid === participant.guid;
-      const matchIp = !e.participantGuid && participant.ip && e.ip === participant.ip;
+      const matchIp = participant.ip && e.ip === participant.ip;
       if (matchGuid || matchIp) set.add(e.topic);
     }
     return set;
@@ -330,7 +398,7 @@ class Aggregator {
     const out = [];
     for (const e of bucket.endpoints.values()) {
       const matchGuid = participant.guid && e.participantGuid && e.participantGuid === participant.guid;
-      const matchIp = !e.participantGuid && participant.ip && e.ip === participant.ip;
+      const matchIp = participant.ip && e.ip === participant.ip;
       if (matchGuid || matchIp) out.push(e);
     }
     return out;
@@ -383,9 +451,13 @@ class Aggregator {
     return {
       guid: participant.guid, name: participant.name, ip: participant.ip, host: participant.host,
       pid: participant.pid, status: participant.status, statusRaw: participant.statusRaw, qos: participant.qos,
+      vendor: participant.vendor, vendorName: participant.vendorName, vendorValue: participant.vendorValue,
+      rtpsVersion: participant.rtpsVersion,
+      online: participant.online, onlineTimestamp: participant.onlineTimestamp, downlineTimestamp: participant.downlineTimestamp,
+      locators: participant.locators,
       publishedTopics: published,
       subscribedTopics: subscribed,
-      endpoints: endpoints.map((e) => ({ guid: e.guid, role: e.role, topic: e.topic, type: e.type, ip: e.ip, participantGuid: e.participantGuid, qos: e.qos, status: e.status, sampleRate: e.sampleRate })),
+      endpoints: endpoints.map((e) => ({ guid: e.guid, role: e.role, topic: e.topic, type: e.type, ip: e.ip, participantGuid: e.participantGuid, entityName: e.entityName, idlfile: e.idlfile, qos: e.qos, status: e.status, sampleRate: e.sampleRate })),
       domainId: bucket.domainId,
       lastSeen: new Date(participant.lastSeenMs).toISOString(),
     };
@@ -427,6 +499,7 @@ class Aggregator {
     const fmtEp = (e) => ({
       ip: e.ip, guid: e.guid, participantGuid: e.participantGuid,
       participantName: participantName(e.participantGuid, e.ip),
+      type: e.type, entityName: e.entityName, idlfile: e.idlfile,
       qos: e.qos, status: e.status, sampleRate: e.sampleRate,
     });
 
@@ -461,6 +534,130 @@ class Aggregator {
       unknownIpEndpointCount,
       multiType: Array.isArray(type) && type.length > 1,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // 需求 4：节点（IP）间收发关系 + 需求 5：主题↔IP 对应。
+  // 发送/接收严格依据 endpoint 的 role（来自 endpoint_type 的 datawriter/datareader），
+  // 不使用 pubsub_guid 判断方向。
+  // -------------------------------------------------------------------------
+
+  // 单 IP 详情：该 IP 的发送主题（有 datawriter）与接收主题（有 datareader）。
+  getIpDetail(domainId, ip) {
+    const bucket = this.buckets.get(String(domainId));
+    if (!bucket) return null;
+    const target = String(ip);
+    const sendTopics = new Map();   // topic -> { name, type, count }
+    const receiveTopics = new Map();
+    for (const e of bucket.endpoints.values()) {
+      if (e.ip !== target || !e.topic) continue;
+      if (e.role === 'writer') {
+        const cur = sendTopics.get(e.topic) || { name: e.topic, type: e.type, count: 0 };
+        cur.count += 1; if (cur.type == null && e.type != null) cur.type = e.type;
+        sendTopics.set(e.topic, cur);
+      } else if (e.role === 'reader') {
+        const cur = receiveTopics.get(e.topic) || { name: e.topic, type: e.type, count: 0 };
+        cur.count += 1; if (cur.type == null && e.type != null) cur.type = e.type;
+        receiveTopics.set(e.topic, cur);
+      }
+    }
+    const sortTopics = (m) => Array.from(m.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return {
+      ip: target,
+      sendTopics: sortTopics(sendTopics),
+      receiveTopics: sortTopics(receiveTopics),
+      sendTopicCount: sendTopics.size,
+      receiveTopicCount: receiveTopics.size,
+    };
+  }
+
+  // 单 IP 交互节点：该 IP 发送给哪些 IP（按主题）、从哪些 IP 接收（按主题）。
+  getIpInteractions(domainId, ip) {
+    const bucket = this.buckets.get(String(domainId));
+    if (!bucket) return null;
+    const target = String(ip);
+    const topicMap = new Map(); // topic -> { writers:Set, readers:Set }
+    for (const e of bucket.endpoints.values()) {
+      if (!e.topic || !e.ip) continue;
+      let t = topicMap.get(e.topic);
+      if (!t) { t = { topic: e.topic, writers: new Set(), readers: new Set() }; topicMap.set(e.topic, t); }
+      if (e.role === 'writer') t.writers.add(e.ip);
+      else if (e.role === 'reader') t.readers.add(e.ip);
+    }
+    const sendTo = new Map();     // peerIp -> Set<topic>
+    const receiveFrom = new Map();
+    for (const t of topicMap.values()) {
+      if (t.writers.has(target)) {
+        for (const r of t.readers) {
+          if (r === target) continue;
+          if (!sendTo.has(r)) sendTo.set(r, new Set());
+          sendTo.get(r).add(t.topic);
+        }
+      }
+      if (t.readers.has(target)) {
+        for (const w of t.writers) {
+          if (w === target) continue;
+          if (!receiveFrom.has(w)) receiveFrom.set(w, new Set());
+          receiveFrom.get(w).add(t.topic);
+        }
+      }
+    }
+    const fmt = (m) => Array.from(m.entries())
+      .map(([peerIp, topics]) => ({ ip: peerIp, topics: Array.from(topics).sort() }))
+      .sort((a, b) => a.ip.localeCompare(b.ip, undefined, { numeric: true }));
+    return { ip: target, sendTo: fmt(sendTo), receiveFrom: fmt(receiveFrom) };
+  }
+
+  // 需求 5：按 IP 查看 —— 每个 IP 的发送主题 / 接收主题清单。
+  getIpTopics(domainId) {
+    const bucket = this.buckets.get(String(domainId));
+    if (!bucket) return { domainId: String(domainId), total: 0, ips: [] };
+    const map = new Map(); // ip -> { sendTopics: Set, receiveTopics: Set }
+    for (const e of bucket.endpoints.values()) {
+      if (!e.ip || !e.topic) continue;
+      let m = map.get(e.ip);
+      if (!m) { m = { ip: e.ip, sendTopics: new Set(), receiveTopics: new Set() }; map.set(e.ip, m); }
+      if (e.role === 'writer') m.sendTopics.add(e.topic);
+      else if (e.role === 'reader') m.receiveTopics.add(e.topic);
+    }
+    const ips = Array.from(map.values()).map((m) => ({
+      ip: m.ip,
+      sendTopics: Array.from(m.sendTopics).sort(),
+      receiveTopics: Array.from(m.receiveTopics).sort(),
+    })).sort((a, b) => a.ip.localeCompare(b.ip, undefined, { numeric: true }));
+    return { domainId: String(domainId), total: ips.length, ips };
+  }
+
+  // 需求 4：按主题的节点（IP）收发关系，含自发自收（同一 IP 既发送又接收）。
+  getNodeRelations(domainId) {
+    const bucket = this.buckets.get(String(domainId));
+    if (!bucket) return null;
+    const topicMap = new Map(); // topic -> { topic, type, senders:Set, receivers:Set }
+    for (const e of bucket.endpoints.values()) {
+      if (!e.topic) continue;
+      if (!e.ip) continue; // 无 IP 无法形成节点关系
+      let t = topicMap.get(e.topic);
+      if (!t) { t = { topic: e.topic, type: e.type, senders: new Set(), receivers: new Set() }; topicMap.set(e.topic, t); }
+      if (e.type != null && t.type == null) t.type = e.type;
+      if (e.role === 'writer') t.senders.add(e.ip);
+      else if (e.role === 'reader') t.receivers.add(e.ip);
+    }
+    const relations = [];
+    const edges = [];
+    for (const t of topicMap.values()) {
+      const senders = Array.from(t.senders).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      const receivers = Array.from(t.receivers).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      const selfSendRecv = senders.some((ip) => t.receivers.has(ip));
+      relations.push({ topic: t.topic, type: t.type, senders, receivers, selfSendRecv });
+      for (const s of senders) {
+        for (const r of receivers) {
+          edges.push({ topic: t.topic, from: s, to: r, self: s === r });
+        }
+      }
+    }
+    relations.sort((a, b) => a.topic.localeCompare(b.topic));
+    const nodes = Array.from(bucket.ips).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return { domainId: String(domainId), nodes, relations, edges };
   }
 
   // FR-05-12：可用 IP 清单

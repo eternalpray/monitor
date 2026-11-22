@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { formatTopicName, useTopicRadix } from '../topicName.js';
 
 const STATUS_CLASS = { OK: 'st-ok', WARN: 'st-warn', ERROR: 'st-err', UNKNOWN: 'st-unknown' };
 
@@ -16,6 +17,7 @@ function keyMetrics(r) {
 }
 
 export default function RecordsTable({ records, onSelect }) {
+  const radix = useTopicRadix();
   const bodyRef = useRef(null);
 
   useEffect(() => {
@@ -45,7 +47,7 @@ export default function RecordsTable({ records, onSelect }) {
                 <td><span className={`status ${STATUS_CLASS[r.status] || 'st-unknown'}`}>{r.status}</span></td>
                 <td><span className="kind">{r.kind}</span>{r.typeName ? <span className="kind-type"> {r.typeName}</span> : null}</td>
                 <td className="mono topic-cell" title={(r.topics || []).map((t) => t.name).join(', ')}>
-                  {(r.topics || []).map((t) => t.name).join(', ') || '—'}
+                  {(r.topics || []).map((t) => formatTopicName(t.name, radix)).join(', ') || '—'}
                 </td>
                 <td className="mono metrics-cell">{keyMetrics(r)}</td>
                 <td className="file-cell" title={r.filePath}>{r.fileName}</td>

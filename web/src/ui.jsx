@@ -39,6 +39,13 @@ export function VerdictBadge({ verdict }) {
   return <span className={`status verdict ${VERDICT_CLASS[v] || 'v-unknown'}`}>{VERDICT_LABEL[v] || v}</span>;
 }
 
+// 在线/离线徽标（节点 & 参与者）
+export function OnlineBadge({ online }) {
+  return online
+    ? <span className="status st-ok">在线</span>
+    : <span className="status st-err">离线</span>;
+}
+
 // 简单键值对展示（QoS 明细等）
 export function KV({ label, value }) {
   return (

@@ -1,44 +1,33 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../api.js';
-import DrawerFrame from './DrawerFrame.jsx';
-import CompatibilityPanel from './CompatibilityPanel.jsx';
+import DetailPanel from './DetailPanel.jsx';
 import IpTopicGraph from './IpTopicGraph.jsx';
-import { VerdictBadge, StatusBadge, Empty, fmtTime } from '../ui.jsx';
+import { Empty } from '../ui.jsx';
+import { formatTopicName, useTopicRadix } from '../topicName.js';
+import { useAliases, aliasLabel } from '../aliases.js';
 
-function IpList({ title, list, color }) {
-  return (
-    <div className="ip-list">
-      <div className="section-title">{title}（{list.length}）</div>
-      {list.length ? (
-        <table>
-          <thead><tr><th>IP</th><th>端点 GUID</th><th>参与者</th><th>QoS 摘要</th><th>状态</th><th>样本速率</th></tr></thead>
-          <tbody>
-            {list.map((e, i) => (
-              <tr key={e.guid || i}>
-                <td className="mono" style={{ color }}>{e.ip || '—'}</td>
-                <td className="mono guid-cell" title={e.guid}>{e.guid || '—'}</td>
-                <td>{e.participantName || '—'}</td>
-                <td className="qos-summary">{qosSummary(e.qos)}</td>
-                <td><StatusBadge status={e.status} /></td>
-                <td className="mono">{e.sampleRate != null ? e.sampleRate : '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : <Empty text="无" />}
-    </div>
-  );
+// 可靠性 → 策略名称（可靠=一次性策略，尽力=周期性策略）
+function policyName(reliability) {
+  if (reliability === 'RELIABLE') return '一次性策略';
+  if (reliability === 'BEST_EFFORT') return '周期性策略';
+  return '—';
 }
 
-function qosSummary(qos) {
-  if (!qos) return '—';
-  const keys = ['reliability', 'durability', 'deadline', 'liveliness', 'ownership'];
-  const parts = keys.filter((k) => qos[k] != null).map((k) => `${k}=${Array.isArray(qos[k]) ? qos[k].join(',') : qos[k]}`);
-  return parts.length ? parts.join(' ') : '—';
+function nodeName(ep) {
+  const n = (ep.entityName || '').trim();
+  if (n && n !== 'Unknown Name') return n;
+  return ep.ip || '—';
 }
 
-// L2-C：主题详情（发送 / 接收 IP + 收发关系图 + 兼容性分析）
-export default function TopicDetail({ domainId, name, onClose, onBack }) {
+function ownershipText(qos) {
+  if (!qos || qos.ownership == null) return '—';
+  return qos.ownershipStrength != null ? `${qos.ownership} (${qos.ownershipStrength})` : qos.ownership;
+}
+
+// 主题交互视图详情：主题居中交互图 + 发送/接收方明细表。
+export default function TopicDetail({ domainId, name, onClose, onOpenIp }) {
+  const radix = useTopicRadix();
+  const { aliases } = useAliases();
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
 
@@ -50,40 +39,59 @@ export default function TopicDetail({ domainId, name, onClose, onBack }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const rows = detail ? [
+    ...(detail.writers || []).map((e) => ({ ...e, role: 'writer' })),
+    ...(detail.readers || []).map((e) => ({ ...e, role: 'reader' })),
+  ] : [];
+
   return (
-    <DrawerFrame
-      title={name}
-      crumbs={[{ label: `域 ${domainId}`, onClick: onBack }]}
+    <DetailPanel
+      title={formatTopicName(name, radix)}
+      crumbs={[{ label: `域 ${domainId}`, onClick: onClose }]}
       onClose={onClose}
-      width="58%"
-      zIndex={110}
     >
       {error ? <Empty text={error} /> : detail ? (
         <>
           <div className="drawer-meta">
             <span>类型 <b className="kind-type">{Array.isArray(detail.type) ? detail.type.join(', ') : detail.type || '—'}</b></span>
-            <span>分区 <b>{Array.isArray(detail.partition) ? detail.partition.join(', ') : detail.partition || '—'}</b></span>
-            <span>兼容性 <VerdictBadge verdict={detail.compatibility.verdict} /></span>
-            <span>发送 IP <b>{detail.sendIps.length}</b> · 接收 IP <b>{detail.receiveIps.length}</b></span>
-            {detail.multiType && <span className="dim">存在同名不同类型</span>}
+            <span>发送节点 <b>{detail.sendIps.length}</b> · 接收节点 <b>{detail.receiveIps.length}</b></span>
           </div>
 
-          <div className="section-title">收发关系图</div>
+          <div className="section-title">主题交互图（发送节点 / 主题 / 接收节点）</div>
           <div className="graph-wrap">
-            <IpTopicGraph topic={detail} />
+            <IpTopicGraph topic={{ name: detail.name, sendIps: detail.sendIps, receiveIps: detail.receiveIps }} />
           </div>
 
-          <IpList title="发送 IP" list={detail.writers || []} color="#2fbf8f" />
-          <IpList title="接收 IP" list={detail.readers || []} color="#5b7cc4" />
-
-          {detail.unknownIpEndpointCount > 0 && (
-            <div className="dim unknown-ip-hint">{detail.unknownIpEndpointCount} 个端点未上报 IP</div>
-          )}
-
-          <div className="section-title">兼容性分析（writer × reader）</div>
-          <CompatibilityPanel compatibility={detail.compatibility} />
+          <div className="section-title">发送 / 接收方明细（{rows.length}）</div>
+          {rows.length ? (
+            <div className="drawer-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>角色</th><th>节点名称</th><th>IP</th><th>GUID</th><th>数据类型</th>
+                    <th>策略名称</th><th>可靠性</th><th>持久化</th><th>所有权/权重</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((e, i) => (
+                    <tr key={e.guid || i}>
+                      <td className={e.role === 'writer' ? 'role-w' : 'role-r'}>{e.role === 'writer' ? '发送' : '接收'}</td>
+                      <td>{nodeName(e)}</td>
+                      <td className="mono link" onClick={() => onOpenIp && onOpenIp(e.ip)}>{aliasLabel(e.ip, aliases)}</td>
+                      <td className="mono guid-cell" title={e.guid}>{e.guid || '—'}</td>
+                      <td className="kind-type">{e.type || '—'}</td>
+                      <td>{policyName(e.qos && e.qos.reliability)}</td>
+                      <td className="mono">{e.qos && e.qos.reliability ? e.qos.reliability : '—'}</td>
+                      <td className="mono">{e.qos && e.qos.durability ? e.qos.durability : '—'}</td>
+                      <td className="mono">{ownershipText(e.qos)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <Empty text="该主题无发送/接收方" />}
         </>
       ) : <Empty text="加载中…" />}
-    </DrawerFrame>
+    </DetailPanel>
   );
 }

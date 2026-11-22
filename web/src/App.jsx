@@ -1,74 +1,60 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { api, subscribe } from './api.js';
+import { TopicRadixContext, DEFAULT_RADIX } from './topicName.js';
+import { AliasContext } from './aliases.js';
 import TopBar from './components/TopBar.jsx';
+import Sidebar from './components/Sidebar.jsx';
 import OverviewCards from './components/OverviewCards.jsx';
-import TrendChart from './components/TrendChart.jsx';
-import Distribution from './components/Distribution.jsx';
-import FilterBar from './components/FilterBar.jsx';
-import RecordsTable from './components/RecordsTable.jsx';
-import DetailDrawer from './components/DetailDrawer.jsx';
 import AlertBar from './components/AlertBar.jsx';
 import DomainList from './components/DomainList.jsx';
 import DomainDetail from './components/DomainDetail.jsx';
-import ParticipantDetail from './components/ParticipantDetail.jsx';
+import TopicListView from './components/TopicListView.jsx';
+import IpTopicsView from './components/IpTopicsView.jsx';
 import TopicDetail from './components/TopicDetail.jsx';
-
-const MAX_CLIENT_RECORDS = 5000;
+import ParticipantDetail from './components/ParticipantDetail.jsx';
+import IpDetail from './components/IpDetail.jsx';
+import DetailPanel from './components/DetailPanel.jsx';
 
 export default function App() {
   const [domains, setDomains] = useState([]);
-  const [records, setRecords] = useState([]);
   const [stats, setStats] = useState(null);
-  const [config, setConfig] = useState(null);
   const [watcher, setWatcher] = useState(null);
   const [connState, setConnState] = useState('connecting');
   const [alerts, setAlerts] = useState([]);
-  const [filters, setFilters] = useState({ node: '', topic: '', status: '', q: '', paused: false });
-  const [selected, setSelected] = useState(null);
-  const [metricNames, setMetricNames] = useState([]);
-  const [series, setSeries] = useState({ metric: null, points: [] });
-  const [showLive, setShowLive] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [aliases, setAliases] = useState({});
 
-  // 抽屉层级：L1 = openDomain；L2 = openParticipant 或 openTopic
-  const [openDomain, setOpenDomain] = useState(null);
-  const [openParticipant, setOpenParticipant] = useState(null);
-  const [openTopic, setOpenTopic] = useState(null);
+  const [radix, setRadix] = useState(DEFAULT_RADIX);
+  const [view, setView] = useState({ kind: 'overview' });
+  const [selection, setSelection] = useState(null);
 
-  const seenIds = useRef(new Set());
+  const navigate = useCallback((next) => { setView(next); setSelection(null); }, []);
 
-  const mergeRecords = useCallback((incoming) => {
-    if (!Array.isArray(incoming) || !incoming.length) return;
-    setRecords((prev) => {
-      const fresh = incoming.filter((r) => !seenIds.current.has(r.id));
-      for (const r of fresh) seenIds.current.add(r.id);
-      if (!fresh.length) return prev;
-      const next = [...fresh, ...prev];
-      if (next.length > MAX_CLIENT_RECORDS) {
-        const removed = next.slice(MAX_CLIENT_RECORDS);
-        for (const r of removed) seenIds.current.delete(r.id);
-        return next.slice(0, MAX_CLIENT_RECORDS);
-      }
-      return next;
-    });
+  const loadAliases = useCallback(() => {
+    api.aliases().then((r) => setAliases(r.aliases || {})).catch(() => {});
   }, []);
+
+  const setAlias = useCallback(async (ip, alias) => {
+    const r = await api.setAlias(ip, alias);
+    setAliases(r.aliases || {});
+  }, []);
+
+  const deleteAlias = useCallback(async (ip) => {
+    const r = await api.deleteAlias(ip);
+    setAliases(r.aliases || {});
+  }, []);
+
+  useEffect(() => { loadAliases(); }, [loadAliases]);
 
   useEffect(() => {
     const sub = subscribe({
       hello: () => setConnState('connected'),
       snapshot: (data) => {
-        seenIds.current = new Set();
-        if (Array.isArray(data.records)) {
-          seenIds.current = new Set(data.records.map((r) => r.id));
-          setRecords(data.records);
-        }
         if (Array.isArray(data.domains)) setDomains(data.domains);
         setStats(data.stats);
-        setConfig(data.config);
         setWatcher(data.watcher);
         setConnState('connected');
       },
-      records: (data) => mergeRecords(data.records),
       stats: (d) => setStats(d),
       watcher: (d) => setWatcher(d),
       domains: (d) => {
@@ -80,43 +66,13 @@ export default function App() {
       onState: (s) => setConnState(s === 'connected' ? 'connected' : 'reconnecting'),
     });
     return () => sub.close();
-  }, [mergeRecords]);
-
-  useEffect(() => {
-    api.metrics().then((r) => setMetricNames(r.metrics || [])).catch(() => {});
   }, []);
 
-  // ESC 逐级关闭抽屉（DR-2）
+  // ESC 关闭右侧详情
   useEffect(() => {
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      if (openParticipant) { setOpenParticipant(null); return; }
-      if (openTopic) { setOpenTopic(null); return; }
-      if (openDomain) setOpenDomain(null);
-    };
+    const onKey = (e) => { if (e.key === 'Escape') setSelection(null); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openDomain, openParticipant, openTopic]);
-
-  const filtered = useMemo(() => {
-    return records.filter((r) => {
-      if (filters.node && r.node !== filters.node) return false;
-      if (filters.status && r.status !== filters.status) return false;
-      if (filters.topic && !(r.topics || []).some((t) => t.name === filters.topic)) return false;
-      if (filters.q) {
-        const hay = `${r.node} ${r.domain} ${r.status} ${r.kind} ${r.typeName || ''} ${(r.topics || []).map((t) => t.name).join(' ')} ${r.fileName}`.toLowerCase();
-        if (!hay.includes(filters.q.toLowerCase())) return false;
-      }
-      return true;
-    });
-  }, [records, filters]);
-
-  const nodes = useMemo(() => Object.keys((stats && stats.nodeDistribution) || {}).sort(), [stats]);
-  const topics = useMemo(() => Object.keys((stats && stats.topicDistribution) || {}).sort(), [stats]);
-
-  const loadSeries = useCallback((metric) => {
-    if (!metric) { setSeries({ metric: null, points: [] }); return; }
-    api.series(metric).then((r) => setSeries({ metric, points: r.points || [] })).catch(() => {});
   }, []);
 
   const doAction = useCallback(async (fn, okMsg) => {
@@ -124,81 +80,76 @@ export default function App() {
     catch (e) { setAlerts((p) => [{ id: Date.now(), level: 'error', message: e.message }, ...p].slice(0, 50)); }
   }, []);
 
-  const openParticipantAt = useCallback((guid) => {
-    setOpenTopic(null);
-    setOpenParticipant({ domainId: openDomain, guid });
-  }, [openDomain]);
+  const openIpAt = useCallback((ip) => { setSelection({ type: 'ip', domainId: view.domainId, ip }); }, [view.domainId]);
+  const openTopicAt = useCallback((name) => { setSelection({ type: 'topic', domainId: view.domainId, name }); }, [view.domainId]);
+  const openParticipantAt = useCallback((guid) => { setSelection({ type: 'participant', domainId: view.domainId, guid }); }, [view.domainId]);
 
-  const openTopicAt = useCallback((name) => {
-    setOpenParticipant(null);
-    setOpenTopic({ domainId: openDomain, name });
-  }, [openDomain]);
+  const importFile = useCallback((file) => {
+    return doAction(async () => {
+      const r = await api.importFile(file, file.name);
+      setAlerts((p) => [{ id: Date.now(), level: 'info', message: `已导入 ${file.name}（解析 ${r.parsed} 条，新增 ${r.added} 条）` }, ...p].slice(0, 50));
+      loadAliases();
+    });
+  }, [doAction, loadAliases]);
+
+  const center = useMemo(() => {
+    switch (view.kind) {
+      case 'domain':
+        if (view.sub === 'ip-topics') return <IpTopicsView domainId={view.domainId} onSelectIp={openIpAt} />;
+        if (view.sub === 'topics') return <TopicListView domainId={view.domainId} revision={revision} onOpenTopic={openTopicAt} />;
+        return <DomainDetail domainId={view.domainId} revision={revision} onOpenIp={openIpAt} onOpenParticipant={openParticipantAt} />;
+      case 'overview':
+      default:
+        return (
+          <>
+            <OverviewCards domains={domains} stats={stats} />
+            <DomainList domains={domains} onOpen={(id) => navigate({ kind: 'domain', domainId: id, sub: 'participants' })} />
+          </>
+        );
+    }
+  }, [view, domains, stats, revision, openIpAt, openTopicAt, openParticipantAt, navigate]);
 
   return (
-    <div className="app">
-      <TopBar
-        connState={connState}
-        watcher={watcher}
-        stats={stats}
-        onRescan={() => doAction(() => api.scan(), '已触发全量重扫')}
-        onDemo={() => doAction(() => api.demoEmit(1), '已生成演示数据')}
-        onDemoSlow={() => doAction(() => api.demoSlow(), '已启动慢速写入验证')}
-        onClear={() => doAction(() => api.clear(), '已清空缓冲')}
-        onConfig={(patch) => doAction(() => api.updateConfig(patch), '配置已更新')}
-      />
+    <TopicRadixContext.Provider value={radix}>
+      <AliasContext.Provider value={{ aliases, setAlias, deleteAlias, refreshAliases: loadAliases }}>
+        <div className="app-shell">
+          <TopBar
+            connState={connState}
+            watcher={watcher}
+            stats={stats}
+            radix={radix}
+            onRadix={setRadix}
+            onImport={importFile}
+            onRescan={() => doAction(() => api.scan(), '已触发全量重扫')}
+            onDemo={() => doAction(() => api.demoEmit(1), '已生成演示数据')}
+            onDemoSlow={() => doAction(() => api.demoSlow(), '已启动慢速写入验证')}
+            onClear={() => doAction(() => api.clear(), '已清空缓冲')}
+            onConfig={(patch) => doAction(() => api.updateConfig(patch), '配置已更新')}
+          />
 
-      <AlertBar alerts={alerts} onDismiss={(id) => setAlerts((p) => p.filter((a) => a.id !== id))} />
+          <AlertBar alerts={alerts} onDismiss={(id) => setAlerts((p) => p.filter((a) => a.id !== id))} />
 
-      <OverviewCards domains={domains} stats={stats} />
-
-      <DomainList domains={domains} onOpen={setOpenDomain} />
-
-      <div className="aux-toggle">
-        <button onClick={() => setShowLive((s) => !s)}>
-          {showLive ? '▾' : '▸'} 实时数据流 / 趋势（辅助）
-        </button>
-      </div>
-      {showLive && (
-        <>
-          <div className="mid-grid">
-            <TrendChart metricNames={metricNames} series={series} onSelect={loadSeries} />
-            <Distribution stats={stats} />
+          <div className="app-body">
+            <Sidebar domains={domains} view={view} onSelect={navigate} />
+            <main className="main">{center}</main>
+            {selection && (
+              <aside className="aside">
+                {selection.type === 'topic' && (
+                  <TopicDetail domainId={selection.domainId} name={selection.name} onClose={() => setSelection(null)} onOpenIp={openIpAt} />
+                )}
+                {selection.type === 'ip' && (
+                  <DetailPanel title={`节点 ${selection.ip}`} crumbs={[{ label: `域 ${selection.domainId}`, onClick: () => setSelection(null) }]} onClose={() => setSelection(null)}>
+                    <IpDetail domainId={selection.domainId} ip={selection.ip} />
+                  </DetailPanel>
+                )}
+                {selection.type === 'participant' && (
+                  <ParticipantDetail domainId={selection.domainId} guid={selection.guid} onClose={() => setSelection(null)} onOpenTopic={openTopicAt} onOpenIp={openIpAt} />
+                )}
+              </aside>
+            )}
           </div>
-          <FilterBar filters={filters} setFilters={setFilters} nodes={nodes} topics={topics} total={records.length} shown={filtered.length} />
-          <RecordsTable records={filtered} onSelect={setSelected} />
-        </>
-      )}
-
-      {openDomain && (
-        <DomainDetail
-          domainId={openDomain}
-          revision={revision}
-          onClose={() => setOpenDomain(null)}
-          onOpenParticipant={openParticipantAt}
-          onOpenTopic={openTopicAt}
-        />
-      )}
-
-      {openParticipant && (
-        <ParticipantDetail
-          domainId={openParticipant.domainId}
-          guid={openParticipant.guid}
-          onClose={() => { setOpenParticipant(null); setOpenDomain(null); }}
-          onBack={() => setOpenParticipant(null)}
-          onOpenTopic={openTopicAt}
-        />
-      )}
-
-      {openTopic && (
-        <TopicDetail
-          domainId={openTopic.domainId}
-          name={openTopic.name}
-          onClose={() => { setOpenTopic(null); setOpenDomain(null); }}
-          onBack={() => setOpenTopic(null)}
-        />
-      )}
-
-      {selected && <DetailDrawer record={selected} onClose={() => setSelected(null)} />}
-    </div>
+        </div>
+      </AliasContext.Provider>
+    </TopicRadixContext.Provider>
   );
 }
