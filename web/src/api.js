@@ -7,7 +7,9 @@ async function http(path, opts = {}) {
   });
   const body = await res.json().catch(() => ({ ok: false }));
   if (!res.ok || body.ok === false) {
-    throw new Error((body.error && body.error.message) || `请求失败 ${res.status}`);
+    const err = new Error((body.error && body.error.message) || `请求失败 ${res.status}`);
+    err.code = body.error && body.error.code;
+    throw err;
   }
   return body;
 }
@@ -64,12 +66,20 @@ export const api = {
   aliases: () => http('/api/aliases'),
   setAlias: (ip, alias) => http('/api/aliases', { method: 'PUT', body: JSON.stringify({ ip, alias }) }),
   deleteAlias: (ip) => http(`/api/aliases/${encodeURIComponent(ip)}`, { method: 'DELETE' }),
+
+  // ---- 监控端对接（解析端 ↔ ljdds_monitor_service） ----
+  monitor: () => http('/api/monitor'),
+  monitorFiles: () => http('/api/monitor/files'),
+  saveMonitorConfig: (cfg) => http('/api/monitor/config', { method: 'PUT', body: JSON.stringify(cfg) }),
+  monitorStart: () => http('/api/monitor/start', { method: 'POST' }),
+  monitorStop: () => http('/api/monitor/stop', { method: 'POST' }),
+  monitorSave: (dest) => http('/api/monitor/save', { method: 'POST', body: JSON.stringify({ dest: dest || undefined }) }),
 };
 
 // 订阅 SSE，返回 { close }。handler(event, data)
 export function subscribe(handlers) {
   const es = new EventSource('/api/events');
-  const events = ['hello', 'snapshot', 'records', 'stats', 'watcher', 'alert', 'heartbeat', 'domains', 'domainDetail', 'compatibility'];
+  const events = ['hello', 'snapshot', 'records', 'stats', 'watcher', 'alert', 'heartbeat', 'domains', 'domainDetail', 'compatibility', 'monitor'];
   for (const ev of events) {
     es.addEventListener(ev, (e) => {
       let data = null;

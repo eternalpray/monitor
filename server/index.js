@@ -14,6 +14,7 @@ const { Aggregator } = require('./aggregate');
 const { AliasStore } = require('./aliases');
 const { createRouter } = require('./routes');
 const { createDemo } = require('./demo');
+const { MonitorService } = require('./monitor');
 
 const VERSION = '1.1.0';
 const ROOT = path.resolve(__dirname, '..');
@@ -31,6 +32,7 @@ function main() {
   const aggregator = new Aggregator(configManager);
   const aliases = new AliasStore(configManager);
   const demo = createDemo(configManager);
+  const monitor = new MonitorService(configManager, parser, store);
 
   configManager.attachWatcher(watcher);
 
@@ -69,12 +71,23 @@ function main() {
   });
   watcher.on('watcher', (s) => sseHub.broadcast('watcher', s));
 
+  // 监控端对接：输出 XML 导入 / 状态变化 → SSE；解析告警 → 告警通道
+  monitor.on('monitor', (p) => {
+    sseHub.broadcast('monitor', p);
+    sseHub.broadcast('stats', store.getStats());
+  });
+  monitor.on('alert', (a) => {
+    store.addError(a);
+    sseHub.broadcast('alert', a);
+    sseHub.broadcast('stats', store.getStats());
+  });
+
   // --- Express ---
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
 
-  const router = createRouter({ store, configManager, watcher, sseHub, demo, logger, aggregator, aliases, version: VERSION });
+  const router = createRouter({ store, configManager, watcher, sseHub, demo, logger, aggregator, aliases, monitor, version: VERSION });
   app.use(router);
 
   // SSE 长连接
@@ -92,6 +105,7 @@ function main() {
       config: configManager.public(),
       watcher: watcher.getStatus(),
       domains: aggregator.listDomains().domains,
+      monitor: monitor.status(),
     });
   });
 
@@ -142,6 +156,7 @@ function main() {
     shuttingDown = true;
     logger.info('shutdown', { signal: sig });
     watcher.close();
+    monitor.close();
     sseHub.close();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();

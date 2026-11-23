@@ -34,6 +34,16 @@ const DEFAULTS = {
   statusMapping: {},
   split: { enabled: false, recordPaths: [], context: [] },
   numericMetricExclude: [],
+  // 监控端（ljdds_monitor_service）对接：目录 / 脚本 / 输出与保存基准，均相对项目根解析。
+  monitor: {
+    serviceDir: '../ljdds_monitor_service',     // 监控端目录（含 start/stop .bat 与 config 子目录）
+    startScript: 'start_ljdds_monitor_service.bat',
+    stopScript: 'stop_ljdds_monitor_service.bat',
+    outputBaseDir: null,   // null = 用 serviceDir；监控端写 XML 的根目录
+    saveBaseDir: null,     // null = 用解析端项目根；保存按钮默认地址
+    shell: true,           // Windows 下经 cmd /c 执行
+    autoDeleteOld: true,   // 读到新 XML 后删除该目录下旧 XML
+  },
 };
 
 const NUM_KEYS = [
@@ -87,6 +97,31 @@ class ConfigManager {
     return path.isAbsolute(d) ? d : path.resolve(this.rootDir, d);
   }
 
+  // 监控端目录 / 输出基准 / 保存基准（相对项目根解析；null 取各自默认）
+  _resolvePath(p, fallback) {
+    const v = p == null || p === '' ? fallback : p;
+    return path.isAbsolute(v) ? v : path.resolve(this.rootDir, v);
+  }
+
+  resolveMonitorServiceDir() {
+    const m = this.config.monitor || {};
+    return this._resolvePath(m.serviceDir, '../ljdds_monitor_service');
+  }
+
+  resolveMonitorConfigDir() {
+    return path.join(this.resolveMonitorServiceDir(), 'config');
+  }
+
+  resolveMonitorOutputBase() {
+    const m = this.config.monitor || {};
+    return this._resolvePath(m.outputBaseDir, this.resolveMonitorServiceDir());
+  }
+
+  resolveMonitorSaveBase() {
+    const m = this.config.monitor || {};
+    return this._resolvePath(m.saveBaseDir, this.rootDir);
+  }
+
   get() {
     return this.config;
   }
@@ -117,6 +152,7 @@ class ConfigManager {
       domainEventThrottleMs: c.domainEventThrottleMs,
       ignorePatterns: c.ignorePatterns.slice(),
       fieldAliases: c.fieldAliases,
+      monitor: Object.assign({}, c.monitor),
     };
   }
 

@@ -93,5 +93,15 @@
     "entity_name", "idlfile", "vendor_id", "rtps_version", "value", "type",
     "domain", "snapshotTimestamp", "startTimestamp", "discoveryMulticastAddress",
     "reliability", "durability", "ownership", "endpoint_type"
-  ]
+  ],
+
+  "monitor": {
+    "serviceDir": "../ljdds_monitor_service",
+    "startScript": "start_ljdds_monitor_service.bat",
+    "stopScript": "stop_ljdds_monitor_service.bat",
+    "outputBaseDir": null,
+    "saveBaseDir": null,
+    "shell": true,
+    "autoDeleteOld": true
+  }
 }

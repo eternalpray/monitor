@@ -16,7 +16,7 @@ function decodeSegment(v) {
 }
 
 function createRouter(deps) {
-  const { store, configManager, watcher, sseHub, demo, logger, version, aggregator, aliases } = deps;
+  const { store, configManager, watcher, sseHub, demo, logger, version, aggregator, aliases, monitor } = deps;
   const router = express.Router();
 
   const ok = (data) => ({ ok: true, ...data });
@@ -222,6 +222,46 @@ function createRouter(deps) {
     const intervalMs = Math.min(Math.max(Number(req.query.intervalMs) || 50, 10), 1000);
     const file = demo.emitSlow(chunks, intervalMs);
     res.json(ok({ file }));
+  });
+
+  // ---- 监控端对接（解析端 ↔ ljdds_monitor_service） ----
+
+  // 状态 + 当前配置 + 校验结果
+  router.get('/api/monitor', (req, res) => {
+    res.json(ok(monitor.status()));
+  });
+
+  // 输出目录 XML 清单
+  router.get('/api/monitor/files', (req, res) => {
+    res.json(ok(monitor.listFiles()));
+  });
+
+  // 写入 3 个配置文件（project_name/start_time 必填、至少一个域）
+  router.put('/api/monitor/config', (req, res) => {
+    const r = monitor.writeConfig(req.body);
+    if (!r.ok) return fail(res, 400, r.code, r.message);
+    res.json(ok(r));
+  });
+
+  // 校验并启动监控端
+  router.post('/api/monitor/start', (req, res) => {
+    const r = monitor.start();
+    if (!r.ok) return fail(res, 400, r.code, r.message);
+    res.json(ok(r));
+  });
+
+  // 停止监控端
+  router.post('/api/monitor/stop', (req, res) => {
+    const r = monitor.stop();
+    if (!r.ok) return fail(res, 400, r.code, r.message);
+    res.json(ok(r));
+  });
+
+  // 保存当前 XML（可选 body.dest 指定目标路径；缺省保存到解析端 saveBase/$project_name/$start_time）
+  router.post('/api/monitor/save', (req, res) => {
+    const r = monitor.saveCurrent(req.body && req.body.dest);
+    if (!r.ok) return fail(res, 400, r.code, r.message);
+    res.json(ok(r));
   });
 
   return router;

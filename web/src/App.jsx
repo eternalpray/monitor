@@ -3,6 +3,8 @@ import { api, subscribe } from './api.js';
 import { TopicRadixContext, DEFAULT_RADIX } from './topicName.js';
 import { AliasContext } from './aliases.js';
 import TopBar from './components/TopBar.jsx';
+import MonitorBar from './components/MonitorBar.jsx';
+import MonitorConfigDialog from './components/MonitorConfigDialog.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import OverviewCards from './components/OverviewCards.jsx';
 import AlertBar from './components/AlertBar.jsx';
@@ -23,6 +25,9 @@ export default function App() {
   const [alerts, setAlerts] = useState([]);
   const [revision, setRevision] = useState(0);
   const [aliases, setAliases] = useState({});
+  const [monitor, setMonitor] = useState(null);
+  const [showMonitorConfig, setShowMonitorConfig] = useState(false);
+  const [monitorBusy, setMonitorBusy] = useState(false);
 
   const [radix, setRadix] = useState(DEFAULT_RADIX);
   const [view, setView] = useState({ kind: 'overview' });
@@ -53,10 +58,12 @@ export default function App() {
         if (Array.isArray(data.domains)) setDomains(data.domains);
         setStats(data.stats);
         setWatcher(data.watcher);
+        if (data.monitor) setMonitor(data.monitor);
         setConnState('connected');
       },
       stats: (d) => setStats(d),
       watcher: (d) => setWatcher(d),
+      monitor: (d) => setMonitor(d),
       domains: (d) => {
         if (Array.isArray(d.domains)) setDomains(d.domains);
         setRevision((r) => r + 1);
@@ -92,6 +99,29 @@ export default function App() {
     });
   }, [doAction, loadAliases]);
 
+  const refreshMonitor = useCallback(() => {
+    api.monitor().then(setMonitor).catch(() => {});
+  }, []);
+
+  const runMonitorAction = useCallback(async (fn, okMsg) => {
+    setMonitorBusy(true);
+    try {
+      const r = await fn();
+      if (r && r.config) setMonitor((p) => ({ ...p, ...r }));
+      else setMonitor(await api.monitor().catch(() => null));
+      if (okMsg) setAlerts((p) => [{ id: Date.now(), level: 'info', message: okMsg }, ...p].slice(0, 50));
+    } catch (e) {
+      setAlerts((p) => [{ id: Date.now(), level: 'error', message: e.message }, ...p].slice(0, 50));
+      if (e.code === 'CONFIG_INVALID') setShowMonitorConfig(true);
+    } finally {
+      setMonitorBusy(false);
+    }
+  }, []);
+
+  const handleMonitorStart = useCallback(() => runMonitorAction(() => api.monitorStart(), '监控端已启动'), [runMonitorAction]);
+  const handleMonitorStop = useCallback(() => runMonitorAction(() => api.monitorStop(), '监控端已停止'), [runMonitorAction]);
+  const handleMonitorSave = useCallback(() => runMonitorAction(() => api.monitorSave(), '已保存当前 XML'), [runMonitorAction]);
+
   const center = useMemo(() => {
     switch (view.kind) {
       case 'domain':
@@ -126,6 +156,23 @@ export default function App() {
             onClear={() => doAction(() => api.clear(), '已清空缓冲')}
             onConfig={(patch) => doAction(() => api.updateConfig(patch), '配置已更新')}
           />
+
+          <MonitorBar
+            monitor={monitor}
+            busy={monitorBusy}
+            onConfigure={() => setShowMonitorConfig(true)}
+            onStart={handleMonitorStart}
+            onStop={handleMonitorStop}
+            onSave={handleMonitorSave}
+          />
+
+          {showMonitorConfig && (
+            <MonitorConfigDialog
+              initial={monitor && monitor.config}
+              onClose={() => setShowMonitorConfig(false)}
+              onSaved={refreshMonitor}
+            />
+          )}
 
           <AlertBar alerts={alerts} onDismiss={(id) => setAlerts((p) => p.filter((a) => a.id !== id))} />
 

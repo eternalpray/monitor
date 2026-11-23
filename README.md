@@ -155,10 +155,48 @@ npm run dev   # 并行启动 Vite(5173) + Express(7788)，Vite 代理 /api 到�
 | GET | `/api/domains/:domainId/topics/:topicName/compatibility` | 单独获取兼容性分析 |
 | GET | `/api/participants/:guid` | 参与者详情（L2-B） |
 | GET | `/api/ips` | 可用 IP 清单（过滤下拉） |
+| GET | `/api/monitor` | 监控端状态 + 当前配置 + 校验结果 |
+| PUT | `/api/monitor/config` | 写入监控端 3 个配置文件（project_name/start_time 必填、至少一个域） |
+| POST | `/api/monitor/start` | 校验并启动监控端（`cmd /c start_ljdds_monitor_service.bat`） |
+| POST | `/api/monitor/stop` | 停止监控端（`cmd /c stop_ljdds_monitor_service.bat`） |
+| POST | `/api/monitor/save` | 保存当前读取的 XML（可选 `body.dest`） |
+| GET | `/api/monitor/files` | 列出监控端输出目录 XML |
 
-SSE 事件：`hello` / `snapshot`（含 `domains[]`）/ `records` / `stats` / `watcher` / `alert` / `heartbeat` / **`domains`** / **`domainDetail`** / **`compatibility`**。
+SSE 事件：`hello` / `snapshot`（含 `domains[]`、`monitor`）/ `records` / `stats` / `watcher` / `alert` / `heartbeat` / **`domains`** / **`domainDetail`** / **`compatibility`** / **`monitor`**。
 
 > 主题名常含 `/`（如 `rt/vehicle/pose`），调用时需 `encodeURIComponent`。
+
+---
+
+## 5.5 监控端对接（解析端 ↔ ljdds_monitor_service）
+
+按《解析端与监控端对接.md》，Web 前台可配置监控参数、启动/停止监控端，并持续读取监控端输出的 XML。
+
+### 目录约定（config.json 的 `monitor` 块）
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `serviceDir` | `../ljdds_monitor_service` | 监控端目录（含 start/stop `.bat` 与 `config` 子目录） |
+| `startScript` / `stopScript` | `start/stop_ljdds_monitor_service.bat` | 启动/停止脚本（Windows 经 `cmd /c` 执行） |
+| `outputBaseDir` | 同 `serviceDir` | 监控端写 XML 的根目录，实际输出 `<outputBaseDir>/<project_name>/<start_time>/` |
+| `saveBaseDir` | 解析端项目根 | “保存”按钮默认地址 `<saveBaseDir>/<project_name>/<start_time>/` |
+| `autoDeleteOld` | `true` | 读到新 XML 后删除该目录下更旧的 XML（只保留最新） |
+
+### 三个配置文件（写入 `<serviceDir>/config/`）
+
+- `ljdds_monitor_service_cfg.ini`：`project_name`、`start_time`（必填）、`refresh_period`（默认 60 秒）、`is_self`（默认 0）。
+- `ljdds_monitor_service_domaincfg.xml`：`<domain multicast_address="239.255.x.1" value="x"/>`，至少一个域，组播地址可改。
+- `ljdds_monitor_service_topiccfg.xml`：`<monitor_topic mode="any"><topic name="…"/></monitor_topic>`，留空 = 监控所有主题。
+
+### 前台交互
+
+- 控制栏「配置 / 启动 / 停止 / 保存」；启动前须完成配置，否则提示「请先完成监控配置」并弹出配置弹窗。
+- 读取到新 XML 后显示「已导入 …（解析 N 条，新增 N 条）」，旧 XML 自动删除，界面平滑更新。
+
+### 缺失降级
+
+`serviceDir` 或 `.bat` 脚本不存在时：配置写入仍会创建 `config` 目录；「启动/停止」返回
+`SERVICE_NOT_FOUND` 并在前台提示，不抛异常、不影响已有解析展示。
 
 ---
 
